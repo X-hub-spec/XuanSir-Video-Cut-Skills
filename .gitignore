@@ -1,0 +1,17 @@
+.env
+**/log/
+**/memory/
+.venv/
+.DS_Store
+output/
+*.mp4
+*.mov
+*.mkv
+*.mp3
+*.wav
+*.log
+__pycache__/
+*.pyc
+delete_segments.json
+*_cut.mp4
+*_roughcut.fcpxml
