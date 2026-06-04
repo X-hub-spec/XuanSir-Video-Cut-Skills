@@ -3,11 +3,14 @@
 **/memory/
 .venv/
 .DS_Store
+dist/
 output/
+models/
 *.mp4
 *.mov
 *.mkv
 *.mp3
+*.m4a
 *.wav
 *.log
 __pycache__/
@@ -15,3 +18,6 @@ __pycache__/
 delete_segments.json
 *_cut.mp4
 *_roughcut.fcpxml
+!剪口播/BGM/
+!剪口播/BGM/*.mp3
+!剪口播/BGM/*.m4a

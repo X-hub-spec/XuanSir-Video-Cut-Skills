@@ -91,7 +91,7 @@ def load_prompt(skill_root: Path) -> str | None:
 
 def convert_result(raw: dict, model: str) -> dict:
     utterances = []
-    for segment in raw.get("segments", []):
+    for segment_index, segment in enumerate(raw.get("segments", [])):
         words = []
         for word in segment.get("words", []):
             words.extend(distribute_word(word))
@@ -107,9 +107,13 @@ def convert_result(raw: dict, model: str) -> dict:
                 for unit in split_text_units(text)
             ]
 
+        raw_text = (segment.get("text") or "").strip()
         utterances.append(
             {
                 "text": "".join(word["text"] for word in words),
+                "raw_text": raw_text,
+                "display_text": raw_text,
+                "segment_id": segment_index,
                 "start_time": round(float(segment.get("start", 0.0)) * 1000),
                 "end_time": round(float(segment.get("end", 0.0)) * 1000),
                 "words": words,
@@ -141,11 +145,16 @@ def main() -> int:
     )
     parser.add_argument("--language", default="zh", help="Whisper language code, default: zh")
     parser.add_argument("--no-prompt", action="store_true", help="Do not load 字幕/词典.txt as prompt")
+    parser.add_argument("--prompt-file", help="Optional reference script or glossary file for Whisper initial_prompt")
     args = parser.parse_args()
 
     script_dir = Path(__file__).resolve().parent
     skill_root = script_dir.parent.parent
     prompt = None if args.no_prompt else load_prompt(skill_root)
+    if args.prompt_file:
+        prompt_path = Path(args.prompt_file)
+        prompt_text = prompt_path.read_text(encoding="utf-8").strip()
+        prompt = "\n".join(part for part in [prompt, prompt_text[:3000]] if part)
 
     raw = mlx_whisper.transcribe(
         args.audio,

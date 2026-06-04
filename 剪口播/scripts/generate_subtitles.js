@@ -18,15 +18,102 @@ if (!fs.existsSync(resultFile)) {
 
 const result = JSON.parse(fs.readFileSync(resultFile, 'utf8'));
 
+function getTrailingPunctuation(text) {
+  const match = String(text || '').trim().match(/[。！？!?，,；;：:]$/);
+  if (!match) return '';
+  const value = match[0];
+  if (value === '!' || value === '！') return '！';
+  if (value === '?' || value === '？') return '？';
+  if (value === ',' || value === '，') return '，';
+  if (value === ';' || value === '；') return '；';
+  if (value === ':' || value === '：') return '：';
+  return '。';
+}
+
+const PUNCTUATION_MAP = new Map([
+  ['。', '。'],
+  ['！', '！'], ['!', '！'],
+  ['？', '？'], ['?', '？'],
+  ['，', '，'], [',', '，'],
+  ['、', '、'],
+  ['；', '；'], [';', '；'],
+  ['：', '：'],
+  ['…', '。'],
+]);
+
+function isIgnorableDisplayChar(char) {
+  return /\s/.test(char) || /["“”'‘’（）()《》【】\[\]]/.test(char);
+}
+
+function normalizeComparableText(text) {
+  return String(text || '').replace(/\s+/g, '').toLowerCase();
+}
+
+function buildPunctuationAfterMap(displayText, utteranceWords) {
+  const punctuationAfter = new Map();
+  const words = utteranceWords || [];
+  let wordIndex = 0;
+  let tokenOffset = 0;
+
+  for (const char of String(displayText || '')) {
+    const normalized = PUNCTUATION_MAP.get(char);
+    if (normalized) {
+      const targetIndex = Math.max(0, Math.min(words.length - 1, wordIndex - 1));
+      const existing = punctuationAfter.get(targetIndex) || '';
+      punctuationAfter.set(targetIndex, existing + normalized);
+      continue;
+    }
+
+    if (isIgnorableDisplayChar(char)) continue;
+    if (wordIndex >= words.length) continue;
+
+    let expected = normalizeComparableText(words[wordIndex].text);
+    const actual = normalizeComparableText(char);
+    if (!expected || !actual) continue;
+
+    if (expected.length <= 1) {
+      wordIndex++;
+      tokenOffset = 0;
+      continue;
+    }
+
+    if (expected[tokenOffset] === actual || expected.includes(actual)) {
+      tokenOffset++;
+      if (tokenOffset >= expected.length) {
+        wordIndex++;
+        tokenOffset = 0;
+      }
+    } else {
+      wordIndex++;
+      tokenOffset = 0;
+    }
+  }
+
+  return punctuationAfter;
+}
+
 // 提取所有字
 const allWords = [];
-for (const utterance of result.utterances) {
+for (let utteranceIndex = 0; utteranceIndex < result.utterances.length; utteranceIndex++) {
+  const utterance = result.utterances[utteranceIndex];
   if (utterance.words) {
-    for (const word of utterance.words) {
+    const segmentText = utterance.display_text || utterance.raw_text || utterance.text || '';
+    const punctuationMap = buildPunctuationAfterMap(segmentText, utterance.words);
+    const trailingPunctuation = getTrailingPunctuation(segmentText);
+    for (let wordIndex = 0; wordIndex < utterance.words.length; wordIndex++) {
+      const word = utterance.words[wordIndex];
+      const punctuation = punctuationMap.get(wordIndex) || (
+        wordIndex === utterance.words.length - 1 ? trailingPunctuation : ''
+      );
       allWords.push({
         text: word.text,
         start: word.start_time / 1000,
-        end: word.end_time / 1000
+        end: word.end_time / 1000,
+        segmentId: utterance.segment_id ?? utteranceIndex,
+        segmentStart: wordIndex === 0,
+        segmentEnd: wordIndex === utterance.words.length - 1,
+        segmentText,
+        punctuationAfter: punctuation,
       });
     }
   }
@@ -65,7 +152,7 @@ if (deleteFile && fs.existsSync(deleteFile)) {
     if (!isDeleted(word.start, word.end)) {
       const deletedBefore = getDeletedTimeBefore(word.start);
       outputWords.push({
-        text: word.text,
+        ...word,
         start: Math.round((word.start - deletedBefore) * 100) / 100,
         end: Math.round((word.end - deletedBefore) * 100) / 100
       });
@@ -106,12 +193,17 @@ for (const word of outputWords) {
     }
   }
 
-  wordsWithGaps.push({
-    text: word.text,
-    start: word.start,
-    end: word.end,
-    isGap: false
-  });
+    wordsWithGaps.push({
+      text: word.text,
+      start: word.start,
+      end: word.end,
+      isGap: false,
+      segmentId: word.segmentId,
+      segmentStart: word.segmentStart,
+      segmentEnd: word.segmentEnd,
+      segmentText: word.segmentText,
+      punctuationAfter: word.punctuationAfter,
+    });
   lastEnd = word.end;
 }
 
