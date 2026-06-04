@@ -776,100 +776,23 @@ const html = `<!DOCTYPE html>
       font-size: 12px;
       line-height: 1.45;
     }
-    .rail-tabs {
-      display: flex;
-      gap: 7px;
-      flex-wrap: wrap;
-      margin-bottom: 16px;
-      font-size: 13px;
-    }
-    .rail-tabs button {
-      height: 28px;
-      padding: 0 9px;
-      border-radius: 999px;
-      color: #7b6d5d;
-      background: rgba(255,255,255,0.35);
-      border: 1px solid rgba(92,75,55,0.13);
-      font-size: 12px;
-      font-weight: 700;
-    }
-    .rail-tabs button.active {
-      color: #2f2923;
-      background: rgba(255,255,255,0.72);
-      border-color: rgba(92,75,55,0.28);
-    }
-    .annotation-list {
+    .annotation-placeholder {
       display: grid;
-      gap: 10px;
-    }
-    .annotation-item {
-      display: grid;
-      grid-template-columns: 48px minmax(0, 1fr);
-      gap: 7px 10px;
-      width: 100%;
-      height: auto;
-      padding: 10px;
+      gap: 9px;
+      margin-top: 20px;
+      padding: 12px;
       border-radius: 6px;
-      color: #776a5a;
-      font-size: 12px;
-      font-weight: 500;
-      text-align: left;
-      cursor: pointer;
-      border: 1px solid transparent;
-      background: transparent;
-      box-shadow: none;
-    }
-    .annotation-item:hover,
-    .annotation-item.active {
-      background: rgba(255,255,255,0.46);
       border-color: rgba(92,75,55,0.12);
-    }
-    .annotation-time {
-      font-family: "SF Mono", Menlo, Consolas, monospace;
-      color: #54483d;
-      line-height: 1.5;
-    }
-    .annotation-body {
-      min-width: 0;
-    }
-    .annotation-title {
-      color: #4b4035;
-      font-weight: 800;
-      line-height: 1.45;
-    }
-    .annotation-detail {
-      margin-top: 3px;
-      color: #8a7a67;
-      line-height: 1.45;
-    }
-    .annotation-actions {
-      grid-column: 2;
-      display: flex;
-      gap: 6px;
-      margin-top: 4px;
-    }
-    .annotation-actions button {
-      height: 24px;
-      padding: 0 8px;
-      border-radius: 999px;
-      color: #6e6257;
-      background: rgba(255,255,255,0.45);
       border: 1px solid rgba(92,75,55,0.12);
-      font-size: 11px;
-      box-shadow: none;
+      background: rgba(255,255,255,0.24);
     }
-    .annotation-item.annotation-kind-gap .annotation-title { color: #8b5b11; }
-    .annotation-item.annotation-kind-delete .annotation-title { color: #9c3933; }
-    .annotation-item.annotation-kind-paragraph .annotation-title { color: #5a5148; }
-    .annotation-empty {
-      padding: 18px 10px;
-      color: #9b8a75;
-      font-size: 12px;
-      line-height: 1.6;
-      border: 1px dashed rgba(92,75,55,0.20);
-      border-radius: 7px;
-      background: rgba(255,255,255,0.25);
+    .annotation-placeholder-line {
+      height: 9px;
+      border-radius: 999px;
+      background: rgba(92,75,55,0.10);
     }
+    .annotation-placeholder-line:nth-child(2) { width: 72%; }
+    .annotation-placeholder-line:nth-child(3) { width: 48%; }
     .bottom-status {
       display: grid;
       grid-template-columns: repeat(5, auto) 1fr auto;
@@ -1056,15 +979,13 @@ const html = `<!DOCTYPE html>
         <aside class="annotation-rail">
           <div class="annotation-header">
             <h2 class="annotation-heading">审核导航</h2>
-            <p class="annotation-subhead">按问题定位文稿，快速预览或改为保留。</p>
+            <p class="annotation-subhead">保留侧栏空间，主操作集中在文稿与字幕视图。</p>
           </div>
-          <div class="rail-tabs">
-            <button class="annotation-filter active" data-filter="all" aria-pressed="true">全部</button>
-            <button class="annotation-filter" data-filter="delete" aria-pressed="false">已删</button>
-            <button class="annotation-filter" data-filter="gap" aria-pressed="false">停顿</button>
-            <button class="annotation-filter" data-filter="paragraph" aria-pressed="false">段落</button>
+          <div class="annotation-placeholder" aria-hidden="true">
+            <span class="annotation-placeholder-line"></span>
+            <span class="annotation-placeholder-line"></span>
+            <span class="annotation-placeholder-line"></span>
           </div>
-          <div class="annotation-list" id="annotationList"></div>
         </aside>
       </div>
       <footer class="bottom-status">
@@ -1096,7 +1017,6 @@ const html = `<!DOCTYPE html>
     const paperMain = document.getElementById('paperMain');
     const paperTitle = document.getElementById('paperTitle');
     const exportProjectBtn = document.getElementById('exportProjectBtn');
-    const annotationList = document.getElementById('annotationList');
     const wordCountMeta = document.getElementById('wordCountMeta');
     const roughDurationMeta = document.getElementById('roughDurationMeta');
     const bottomCurrent = document.getElementById('bottomCurrent');
@@ -1131,14 +1051,11 @@ const html = `<!DOCTYPE html>
     let paragraphStartIndices = [];
     let sentenceStartIndices = [];
     let articleBlocks = [];
-    let annotationItems = [];
-    let annotationElements = [];
     let subtitleRows = [];
     let subtitleRowElements = [];
     let subtitleBreakAfterIndices = new Set();
     let subtitleMergedStartIndices = new Set();
     let activeMainView = 'article';
-    let activeAnnotationFilter = 'all';
     let currentIndex = -1;
     let hasLoadedProjectState = false;
     let saveTimer = null;
@@ -1196,7 +1113,6 @@ const html = `<!DOCTYPE html>
         projectTitle,
         currentTime: Math.round((player.currentTime || 0) * 10) / 10,
         playbackRate: player.playbackRate || 1,
-        activeAnnotationFilter,
         selectedBgm,
         activeMainView,
         subtitleBreakAfterIndices: Array.from(subtitleBreakAfterIndices).sort((a, b) => a - b),
@@ -1214,7 +1130,6 @@ const html = `<!DOCTYPE html>
         deleteSegments: getSelectedSegments(),
         currentTime: player.currentTime || 0,
         playbackRate: player.playbackRate || 1,
-        activeAnnotationFilter,
         selectedBgm,
         activeMainView,
         subtitleBreakAfterIndices: Array.from(subtitleBreakAfterIndices).sort((a, b) => a - b),
@@ -1344,7 +1259,6 @@ const html = `<!DOCTYPE html>
           const validIndices = data.state.selectedIndices
             .map(i => Number(i))
             .filter(i => Number.isInteger(i) && i >= 0 && i < words.length);
-          activeAnnotationFilter = data.state.activeAnnotationFilter || 'all';
           activeMainView = data.state.activeMainView === 'subtitle' ? 'subtitle' : 'article';
           subtitleBreakAfterIndices = new Set((data.state.subtitleBreakAfterIndices || [])
             .map(i => Number(i))
@@ -1686,7 +1600,6 @@ const html = `<!DOCTYPE html>
       rebuildSkipIntervals();
       updateStats();
       wordCountMeta.textContent = words.filter((word, index) => !word.isGap && getWordText(index)).length;
-      refreshAnnotations();
       renderSubtitles();
       setActiveMainView(activeMainView, { persist: false, pushHistory: false });
       updateUndoButtons();
@@ -1699,7 +1612,6 @@ const html = `<!DOCTYPE html>
       words.forEach((_, i) => syncElementState(i));
       rebuildSkipIntervals();
       updateStats();
-      refreshAnnotations();
       renderSubtitles();
       updateUndoButtons();
       if (persist) scheduleProjectSave();
@@ -1736,246 +1648,6 @@ const html = `<!DOCTYPE html>
     function updateUndoButtons() {
       document.querySelectorAll('.status-actions button')[0].disabled = undoStack.length === 0;
       document.querySelectorAll('.status-actions button')[1].disabled = redoStack.length === 0;
-    }
-
-    function paragraphPlainText(block) {
-      return block
-        .flatMap(sentenceBlock => sentenceBlock.items)
-        .filter(item => item.type === 'word')
-        .map(item => getWordText(item.index))
-        .join('');
-    }
-
-    function buildSelectionRuns() {
-      const sorted = Array.from(selected).sort((a, b) => a - b);
-      const runs = [];
-      let current = null;
-
-      sorted.forEach(index => {
-        const word = words[index];
-        if (!word) return;
-        if (!current) {
-          current = { indices: [index], start: word.start, end: word.end };
-          return;
-        }
-
-        const closeByTime = word.start - current.end < 0.2;
-        const closeByIndex = index - current.indices[current.indices.length - 1] <= 2;
-        if (closeByTime || closeByIndex) {
-          current.indices.push(index);
-          current.end = Math.max(current.end, word.end);
-        } else {
-          runs.push(current);
-          current = { indices: [index], start: word.start, end: word.end };
-        }
-      });
-
-      if (current) runs.push(current);
-      return runs
-        .map((run, runIndex) => {
-          const gapItems = run.indices.filter(i => words[i]?.isGap);
-          const wordItems = run.indices.filter(i => !words[i]?.isGap);
-          const duration = Math.max(0, run.end - run.start);
-          const maxGap = Math.max(0, ...gapItems.map(i => words[i].end - words[i].start));
-          const text = wordItems.map(i => getWordText(i)).join('').slice(0, 18);
-          const isGap = gapItems.length > wordItems.length || maxGap >= 1;
-          let title = isGap ? '停顿已删除' : '已删除片段';
-          let detail = \`\${formatDurationCompact(duration)} · \${run.indices.length} 个元素\`;
-          if (run.start < 10 && duration >= 5) {
-            title = '开场建议删减';
-            detail = \`\${formatDurationCompact(duration)} · 开场空白/废稿\`;
-          } else if (isGap) {
-            detail = \`\${formatDurationCompact(duration)} · 最长停顿 \${maxGap.toFixed(1)}s\`;
-          } else if (text) {
-            detail = \`\${detail} · \${text}\`;
-          }
-          if (!isGap && duration >= 8) title = '建议精简';
-          if (!isGap && text) title = text.length >= 12 ? '表达可精简' : '已删除表达';
-          return {
-            id: \`delete-\${runIndex}\`,
-            kind: isGap ? 'gap' : 'delete',
-            startIndex: run.indices[0],
-            time: run.start,
-            indices: run.indices,
-            title,
-            detail,
-            duration
-          };
-        })
-        .filter(item => item.duration >= 0.04);
-    }
-
-    function buildAnnotationItems(blocks) {
-      const selectionItems = buildSelectionRuns();
-      const paragraphItems = blocks.map((block, paragraphIndex) => {
-        const items = block.flatMap(sentenceBlock => sentenceBlock.items);
-        const startIndex = getFirstTimedIndex(items);
-        const text = paragraphPlainText(block);
-
-        return {
-          id: \`paragraph-\${paragraphIndex}\`,
-          kind: 'paragraph',
-          paragraphIndex,
-          startIndex,
-          time: startIndex >= 0 ? words[startIndex].start : 0,
-          indices: startIndex >= 0 ? [startIndex] : [],
-          title: isTopicStart(startIndex) ? '段落起点' : '文稿段落',
-          detail: text ? text.slice(0, 18) : '定位到这一段'
-        };
-      }).filter(item => item.startIndex >= 0);
-
-      const selectedTimes = selectionItems.map(item => item.time);
-      const usefulParagraphs = paragraphItems.filter(item => {
-        return !selectedTimes.some(time => Math.abs(time - item.time) < 1.5);
-      });
-
-      return [...selectionItems, ...usefulParagraphs]
-        .sort((a, b) => a.time - b.time);
-    }
-
-    function renderAnnotations() {
-      annotationList.innerHTML = '';
-      annotationElements = [];
-      const visibleItems = annotationItems.filter(item => {
-        if (activeAnnotationFilter === 'all') return true;
-        if (activeAnnotationFilter === 'delete') return item.kind === 'delete' || item.kind === 'gap';
-        return item.kind === activeAnnotationFilter;
-      });
-
-      document.querySelectorAll('.rail-tabs button').forEach(button => {
-        const isActive = button.dataset.filter === activeAnnotationFilter;
-        button.classList.toggle('active', isActive);
-        button.setAttribute('aria-pressed', String(isActive));
-      });
-
-      if (!visibleItems.length) {
-        const emptyEl = document.createElement('div');
-        emptyEl.className = 'annotation-empty';
-        emptyEl.textContent = '这个分类下暂时没有项目。';
-        annotationList.appendChild(emptyEl);
-        return;
-      }
-
-      visibleItems.forEach(item => {
-        const el = document.createElement('div');
-        el.className = 'annotation-item';
-        el.dataset.itemId = item.id;
-        if (item.kind === 'paragraph') el.classList.add('annotation-kind-paragraph');
-        if (item.kind === 'gap') el.classList.add('annotation-kind-gap');
-        if (item.kind === 'delete') el.classList.add('annotation-kind-delete');
-
-        const timeEl = document.createElement('span');
-        timeEl.className = 'annotation-time';
-        timeEl.textContent = formatTime(item.time);
-
-        const bodyEl = document.createElement('div');
-        bodyEl.className = 'annotation-body';
-
-        const titleEl = document.createElement('div');
-        titleEl.className = 'annotation-title';
-        titleEl.textContent = item.title;
-
-        const detailEl = document.createElement('div');
-        detailEl.className = 'annotation-detail';
-        detailEl.textContent = item.detail;
-
-        const actionsEl = document.createElement('div');
-        actionsEl.className = 'annotation-actions';
-
-        const locateBtn = document.createElement('button');
-        locateBtn.type = 'button';
-        locateBtn.className = 'annotation-action';
-        locateBtn.dataset.action = 'locate';
-        locateBtn.textContent = '定位';
-        locateBtn.onclick = event => {
-          event.stopPropagation();
-          locateAnnotation(item);
-        };
-
-        const playBtn = document.createElement('button');
-        playBtn.type = 'button';
-        playBtn.className = 'annotation-action';
-        playBtn.dataset.action = 'play';
-        playBtn.textContent = '播放';
-        playBtn.onclick = event => {
-          event.stopPropagation();
-          playAnnotation(item);
-        };
-
-        actionsEl.appendChild(locateBtn);
-        actionsEl.appendChild(playBtn);
-
-        if (item.kind !== 'paragraph') {
-          const keepBtn = document.createElement('button');
-          keepBtn.type = 'button';
-          keepBtn.className = 'annotation-action annotation-action-keep';
-          keepBtn.dataset.action = 'keep';
-          keepBtn.textContent = '保留';
-          keepBtn.onclick = event => {
-            event.stopPropagation();
-            keepAnnotation(item);
-          };
-          actionsEl.appendChild(keepBtn);
-        }
-
-        bodyEl.appendChild(titleEl);
-        bodyEl.appendChild(detailEl);
-
-        el.appendChild(timeEl);
-        el.appendChild(bodyEl);
-        el.appendChild(actionsEl);
-        el.onclick = () => {
-          locateAnnotation(item);
-        };
-        annotationList.appendChild(el);
-        annotationElements.push(el);
-      });
-    }
-
-    function refreshAnnotations() {
-      if (!articleBlocks.length) return;
-      annotationItems = buildAnnotationItems(articleBlocks);
-      renderAnnotations();
-      updateActiveAnnotation(player.currentTime || 0);
-    }
-
-    function locateAnnotation(item) {
-      player.currentTime = item.time;
-      scrollToIndex(item.startIndex);
-    }
-
-    function playAnnotation(item) {
-      locateAnnotation(item);
-      player.play();
-    }
-
-    function keepAnnotation(item) {
-      if (!item.indices?.length) return;
-      pushUndo();
-      item.indices.forEach(i => selected.delete(i));
-      item.indices.forEach(i => syncElementState(i));
-      rebuildSkipIntervals();
-      updateStats();
-      refreshAnnotations();
-      renderSubtitles();
-      scheduleProjectSave();
-    }
-
-    function updateActiveAnnotation(time) {
-      if (!annotationItems.length) return;
-      const visibleItems = annotationItems.filter(item => {
-        if (activeAnnotationFilter === 'all') return true;
-        if (activeAnnotationFilter === 'delete') return item.kind === 'delete' || item.kind === 'gap';
-        return item.kind === activeAnnotationFilter;
-      });
-      let activeId = visibleItems[0]?.id;
-      for (let i = 0; i < visibleItems.length; i++) {
-        if (visibleItems[i].time <= time) activeId = visibleItems[i].id;
-        else break;
-      }
-      annotationElements.forEach(el => {
-        el.classList.toggle('active', el.dataset.itemId === activeId);
-      });
     }
 
     function scrollToIndex(index) {
@@ -2415,7 +2087,6 @@ const html = `<!DOCTYPE html>
       sentenceStartIndices = [];
 
       articleBlocks = buildArticleBlocks(words);
-      annotationItems = buildAnnotationItems(articleBlocks);
       articleBlocks.forEach((block, paragraphIndex) => {
         const paragraphEl = document.createElement('p');
         paragraphEl.className = 'article-paragraph';
@@ -2450,7 +2121,6 @@ const html = `<!DOCTYPE html>
         content.appendChild(paragraphEl);
       });
 
-      renderAnnotations();
       renderSubtitles();
       setActiveMainView(activeMainView, { persist: false });
       wordCountMeta.textContent = words.filter(word => !word.isGap).length;
@@ -2458,15 +2128,6 @@ const html = `<!DOCTYPE html>
       updateStats();
       updateUndoButtons();
     }
-
-    document.querySelectorAll('.rail-tabs button').forEach(button => {
-      button.addEventListener('click', () => {
-        activeAnnotationFilter = button.dataset.filter || 'all';
-        renderAnnotations();
-        updateActiveAnnotation(player.currentTime || 0);
-        scheduleProjectSave();
-      });
-    });
 
     viewSwitch.querySelectorAll('button').forEach(button => {
       button.addEventListener('click', () => {
@@ -2508,7 +2169,6 @@ const html = `<!DOCTYPE html>
       committed.forEach(i => syncElementState(i));
       rebuildSkipIntervals();
       updateStats();
-      refreshAnnotations();
       renderSubtitles();
       scheduleProjectSave();
     }
@@ -2574,7 +2234,6 @@ const html = `<!DOCTYPE html>
       });
       rebuildSkipIntervals();
       updateStats();
-      refreshAnnotations();
       renderSubtitles();
       scheduleProjectSave();
       window.getSelection()?.removeAllRanges();
@@ -2663,7 +2322,6 @@ const html = `<!DOCTYPE html>
       syncElementState(i);
       rebuildSkipIntervals();
       updateStats();
-      refreshAnnotations();
       renderSubtitles();
       scheduleProjectSave();
     }
@@ -2678,7 +2336,6 @@ const html = `<!DOCTYPE html>
       });
       rebuildSkipIntervals();
       updateStats();
-      refreshAnnotations();
       renderSubtitles();
       scheduleProjectSave();
     }
@@ -2789,7 +2446,6 @@ const html = `<!DOCTYPE html>
           }
         }
         currentIndex = curr;
-        updateActiveAnnotation(t);
         updateActiveSubtitleRow(t);
         lastHighlight = curr;
       }

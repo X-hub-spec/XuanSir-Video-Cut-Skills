@@ -76,7 +76,6 @@ function saveProjectState(state) {
     textOverrides,
     currentTime: Number.isFinite(Number(state.currentTime)) ? Math.max(0, Number(state.currentTime)) : 0,
     playbackRate: Number.isFinite(Number(state.playbackRate)) ? Number(state.playbackRate) : 1,
-    activeAnnotationFilter: typeof state.activeAnnotationFilter === 'string' ? state.activeAnnotationFilter : 'all',
     selectedBgm: typeof state.selectedBgm === 'string' ? state.selectedBgm : '',
     activeMainView: state.activeMainView === 'subtitle' ? 'subtitle' : 'article',
     subtitleBreakAfterIndices: normalizeSelectedIndices(state.subtitleBreakAfterIndices || []),

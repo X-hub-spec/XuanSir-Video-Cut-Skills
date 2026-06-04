@@ -4,6 +4,20 @@
 
 它把视频转成可阅读、可划线、可批注的文稿。你像审稿一样删掉口误、重复、停顿和废话，系统再把这些删除决定转换成视频粗剪、FCPXML 工程和 SRT 字幕。
 
+## 界面预览
+
+### 文章视图
+
+像审一篇纸质稿件一样做粗剪：正文可阅读，口误和停顿可划掉，视频预览和统计在左侧辅助确认。
+
+![文章视图](./docs/images/article-view.png)
+
+### 字幕视图
+
+按字幕行检查节奏和长度，支持分段、合并，并提示字幕过长/过短。
+
+![字幕视图](./docs/images/subtitle-view.png)
+
 ## 核心功能
 
 - **AI 粗剪建议**：自动标记静音、重复表达、口误、重说和明显废话。
@@ -29,7 +43,7 @@
 
 ```bash
 mkdir -p ~/.claude/skills
-git clone https://github.com/xuansir1/XuanSir-Video-Cut-Skills.git ~/.claude/skills/videocut
+git clone https://github.com/X-hub-spec/XuanSir-Video-Cut-Skills.git ~/.claude/skills/videocut
 ```
 
 安装基础依赖：
@@ -52,4 +66,3 @@ python3 -m venv .venv
 - [使用说明](./使用说明.md)
 - [工程原理](./工程原理.md)
 - [剪辑审核页产品说明](./剪辑审核页产品说明.md)
-
