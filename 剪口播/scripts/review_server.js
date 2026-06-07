@@ -15,14 +15,35 @@ const fs = require('fs');
 const path = require('path');
 const { execFileSync, execSync } = require('child_process');
 const { pathToFileURL } = require('url');
+const multicamUtils = require('./multicam_utils');
 
 const PORT = process.argv[2] || 8899;
-let VIDEO_FILE = process.argv[3] || findVideoFile();
 const PROJECT_STATE_FILE = 'review_project_state.json';
+const MULTICAM_PROJECT_FILE = 'multicam_project.json';
 const SKILL_ROOT = path.resolve(__dirname, '..', '..');
 const DICTIONARY_FILE = path.join(SKILL_ROOT, '字幕', '词典.txt');
+const MULTICAM_PROJECT = loadMulticamProject();
+let VIDEO_FILE = process.argv[3] || findVideoFile(MULTICAM_PROJECT);
 
-function findVideoFile() {
+function loadMulticamProject() {
+  try {
+    if (!fs.existsSync(MULTICAM_PROJECT_FILE)) return null;
+    const project = JSON.parse(fs.readFileSync(MULTICAM_PROJECT_FILE, 'utf8'));
+    if (!project || project.mode !== 'multicam') return null;
+    project.duration = multicamUtils.estimateProjectDuration(project);
+    return project;
+  } catch (err) {
+    console.warn('⚠️ 读取 multicam_project.json 失败:', err.message);
+    return null;
+  }
+}
+
+function findVideoFile(multicamProject = null) {
+  if (multicamProject) {
+    const primary = (multicamProject.sources || []).find(source => source.primary && source.kind === 'video')
+      || (multicamProject.sources || []).find(source => source.kind === 'video');
+    if (primary) return primary.reviewPath || primary.path;
+  }
   const files = fs.readdirSync('.').filter(f => f.endsWith('.mp4'));
   return files[0] || 'source.mp4';
 }
@@ -65,11 +86,48 @@ function normalizeProjectTitle(value) {
   return text || '口播粗剪校样';
 }
 
+function normalizeStringMap(value) {
+  const normalized = {};
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return normalized;
+  Object.entries(value).forEach(([key, item]) => {
+    const safeKey = String(key || '').trim();
+    if (!safeKey) return;
+    normalized[safeKey] = String(item || '').slice(0, 200);
+  });
+  return normalized;
+}
+
+function normalizeNumberMap(value) {
+  const normalized = {};
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return normalized;
+  Object.entries(value).forEach(([key, item]) => {
+    const safeKey = String(key || '').trim();
+    const number = Number(item);
+    if (!safeKey || !Number.isFinite(number)) return;
+    normalized[safeKey] = number;
+  });
+  return normalized;
+}
+
+function normalizeParagraphPayload(value) {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((paragraph, index) => ({
+      id: String(paragraph.id || `paragraph_${index + 1}`),
+      start: Number(paragraph.start),
+      end: Number(paragraph.end),
+      startIndex: Number.isInteger(Number(paragraph.startIndex)) ? Number(paragraph.startIndex) : null,
+    }))
+    .filter(paragraph => Number.isFinite(paragraph.start) && Number.isFinite(paragraph.end) && paragraph.end > paragraph.start);
+}
+
 function saveProjectState(state) {
   const selectedIndices = normalizeSelectedIndices(state.selectedIndices || []);
   const textOverrides = normalizeTextOverrides(state.textOverrides || {});
+  const isMulticam = state.mode === 'multicam' || MULTICAM_PROJECT?.mode === 'multicam';
   const payload = {
-    version: 1,
+    version: isMulticam ? 2 : 1,
+    mode: isMulticam ? 'multicam' : 'single',
     videoFile: VIDEO_FILE,
     projectTitle: normalizeProjectTitle(state.projectTitle || ''),
     selectedIndices,
@@ -80,6 +138,13 @@ function saveProjectState(state) {
     activeMainView: state.activeMainView === 'subtitle' ? 'subtitle' : 'article',
     subtitleBreakAfterIndices: normalizeSelectedIndices(state.subtitleBreakAfterIndices || []),
     subtitleMergedStartIndices: normalizeSelectedIndices(state.subtitleMergedStartIndices || []),
+    manualParagraphBreakAfterIndices: normalizeSelectedIndices(state.manualParagraphBreakAfterIndices || []),
+    paragraphOrderStartIndices: normalizeSelectedIndices(state.paragraphOrderStartIndices || []),
+    sourceOffsets: normalizeNumberMap(state.sourceOffsets || {}),
+    speakerNames: normalizeStringMap(state.speakerNames || {}),
+    activeCameraId: typeof state.activeCameraId === 'string' ? state.activeCameraId : '',
+    paragraphOrder: Array.isArray(state.paragraphOrder) ? state.paragraphOrder.map(String) : [],
+    paragraphs: normalizeParagraphPayload(state.paragraphs || []),
     wordCount: Number.isFinite(Number(state.wordCount)) ? Number(state.wordCount) : null,
     deleteSegments: Array.isArray(state.deleteSegments) ? state.deleteSegments : [],
     savedAt: new Date().toISOString(),
@@ -209,6 +274,7 @@ const server = http.createServer((req, res) => {
         const payload = JSON.parse(body || '{}');
         const deleteList = Array.isArray(payload) ? payload : payload.segments;
         const subtitles = Array.isArray(payload.subtitles) ? payload.subtitles : [];
+        const orderedTimelineRanges = Array.isArray(payload.orderedTimelineRanges) ? payload.orderedTimelineRanges : null;
         if (!Array.isArray(deleteList)) {
           throw new Error('删除列表格式错误');
         }
@@ -226,8 +292,13 @@ const server = http.createServer((req, res) => {
         const fcpxmlOutput = path.join(outputDir, fcpxmlOutputName);
         const srtOutput = path.join(outputDir, srtOutputName);
 
-        const fcpxmlResult = exportFinalCutXML(VIDEO_FILE, deleteList, fcpxmlOutput);
-        const srtResult = exportSRT(VIDEO_FILE, deleteList, subtitles, srtOutput);
+        const isMulticamExport = payload.mode === 'multicam' || MULTICAM_PROJECT?.mode === 'multicam';
+        const fcpxmlResult = isMulticamExport
+          ? exportMulticamFinalCutXML(MULTICAM_PROJECT, payload, fcpxmlOutput)
+          : exportFinalCutXML(VIDEO_FILE, deleteList, fcpxmlOutput, orderedTimelineRanges);
+        const srtResult = isMulticamExport
+          ? exportSRTForOrderedTimeline(MULTICAM_PROJECT, payload, subtitles, srtOutput)
+          : exportSRT(VIDEO_FILE, deleteList, subtitles, srtOutput, orderedTimelineRanges);
 
         sendJson(res, 200, {
           success: true,
@@ -264,7 +335,11 @@ const server = http.createServer((req, res) => {
     req.on('end', () => {
       try {
         const payload = JSON.parse(body);
+        if (payload.mode === 'multicam' || MULTICAM_PROJECT?.mode === 'multicam') {
+          throw new Error('多机位模式首版不支持直接渲染 mp4，请使用“导出工程”生成 FCPXML');
+        }
         const deleteList = Array.isArray(payload) ? payload : payload.segments;
+        const orderedTimelineRanges = Array.isArray(payload.orderedTimelineRanges) ? payload.orderedTimelineRanges : null;
         if (!Array.isArray(deleteList)) {
           throw new Error('删除列表格式错误');
         }
@@ -275,7 +350,9 @@ const server = http.createServer((req, res) => {
         const outputName = `${baseName}_roughcut.fcpxml`;
         const outputDir = payload.chooseDirectory ? chooseOutputDirectory() : process.cwd();
         const outputFile = path.join(outputDir, outputName);
-        const result = exportFinalCutXML(VIDEO_FILE, deleteList, outputFile);
+        const result = (payload.mode === 'multicam' || MULTICAM_PROJECT?.mode === 'multicam')
+          ? exportMulticamFinalCutXML(MULTICAM_PROJECT, payload, outputFile)
+          : exportFinalCutXML(VIDEO_FILE, deleteList, outputFile, orderedTimelineRanges);
 
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({
@@ -318,7 +395,9 @@ const server = http.createServer((req, res) => {
         const outputName = `${baseName}_roughcut.srt`;
         const outputDir = payload.chooseDirectory ? chooseOutputDirectory() : process.cwd();
         const outputFile = path.join(outputDir, outputName);
-        const result = exportSRT(VIDEO_FILE, deleteList, subtitles, outputFile);
+        const result = (payload.mode === 'multicam' || MULTICAM_PROJECT?.mode === 'multicam')
+          ? exportSRTForOrderedTimeline(MULTICAM_PROJECT, payload, subtitles, outputFile)
+          : exportSRT(VIDEO_FILE, deleteList, subtitles, outputFile, orderedTimelineRanges);
 
         sendJson(res, 200, {
           success: true,
@@ -346,10 +425,11 @@ const server = http.createServer((req, res) => {
       try {
         const payload = JSON.parse(body);
         const deleteList = Array.isArray(payload) ? payload : payload.segments;
+        const orderedTimelineRanges = Array.isArray(payload.orderedTimelineRanges) ? payload.orderedTimelineRanges : null;
         if (!Array.isArray(deleteList)) {
           throw new Error('渲染参数错误：缺少删除片段列表');
         }
-        if (deleteList.length === 0) {
+        if (deleteList.length === 0 && !orderedTimelineRanges?.length) {
           throw new Error('当前没有红线删除片段，已取消渲染，避免输出完整视频');
         }
 
@@ -358,18 +438,19 @@ const server = http.createServer((req, res) => {
         console.log(`📝 保存 ${deleteList.length} 个删除片段`);
 
         // 生成输出文件名
-        const baseName = path.basename(VIDEO_FILE, '.mp4');
-        const outputName = `${baseName}_cut.mp4`;
+        const sourceExt = path.extname(VIDEO_FILE);
+        const baseName = path.basename(VIDEO_FILE, sourceExt);
+        const outputName = `${baseName}_cut${hasVideoStream(VIDEO_FILE) ? '.mp4' : '.m4a'}`;
         const outputDir = payload && !Array.isArray(payload) && payload.chooseDirectory ? chooseOutputDirectory() : process.cwd();
         const outputFile = path.join(outputDir, outputName);
 
         // 执行渲染
         const scriptPath = path.join(__dirname, 'cut_video.sh');
 
-        if (!fs.existsSync(scriptPath)) {
+        if (!fs.existsSync(scriptPath) || orderedTimelineRanges?.length) {
           // 如果没有 cut_video.sh，用内置的 ffmpeg 命令
           console.log('🎬 执行渲染...');
-          executeFFmpegCut(VIDEO_FILE, deleteList, outputFile);
+          executeFFmpegCut(VIDEO_FILE, deleteList, outputFile, orderedTimelineRanges);
         } else {
           console.log('🎬 调用 cut_video.sh...');
           execSync(`bash "${scriptPath}" "${VIDEO_FILE}" delete_segments.json "${outputFile}"`, {
@@ -557,6 +638,21 @@ function computeKeepSegments(deleteList, duration) {
   return keepSegments.filter(seg => seg.end - seg.start > 0.001);
 }
 
+function normalizeOrderedTimelineRanges(ranges, duration) {
+  if (!Array.isArray(ranges)) return [];
+  return ranges
+    .map(seg => ({
+      start: Math.max(0, Math.min(duration, Number(seg.start))),
+      end: Math.max(0, Math.min(duration, Number(seg.end)))
+    }))
+    .filter(seg => Number.isFinite(seg.start) && Number.isFinite(seg.end) && seg.end - seg.start > 0.001);
+}
+
+function getTimelineSegments(deleteList, duration, orderedTimelineRanges) {
+  const ordered = normalizeOrderedTimelineRanges(orderedTimelineRanges, duration);
+  return ordered.length ? ordered : computeKeepSegments(deleteList, duration);
+}
+
 function formatSrtTime(seconds) {
   const totalMs = Math.max(0, Math.round((Number(seconds) || 0) * 1000));
   const h = Math.floor(totalMs / 3600000);
@@ -575,7 +671,6 @@ function mapSourceTimeToTimeline(time, keepSegments) {
     if (sourceTime >= seg.start - 0.001 && sourceTime <= seg.end + 0.001) {
       return timelineOffset + Math.max(0, Math.min(duration, sourceTime - seg.start));
     }
-    if (sourceTime < seg.start) return null;
     timelineOffset += duration;
   }
   return null;
@@ -629,9 +724,9 @@ function generateSRT(cues) {
   ].join('\n')).join('\n');
 }
 
-function exportSRT(input, deleteList, subtitles, output) {
+function exportSRT(input, deleteList, subtitles, output, orderedTimelineRanges = null) {
   const media = probeMedia(input);
-  const keepSegments = computeKeepSegments(deleteList, media.duration);
+  const keepSegments = getTimelineSegments(deleteList, media.duration, orderedTimelineRanges);
   const timelineDuration = keepSegments.reduce((sum, seg) => sum + (seg.end - seg.start), 0);
   const cues = normalizeSubtitleCues(subtitles, keepSegments);
   const srt = generateSRT(cues);
@@ -639,6 +734,83 @@ function exportSRT(input, deleteList, subtitles, output) {
   console.log(`✅ SRT: ${output}`);
   console.log(`💬 字幕条数: ${cues.length}, 时间线时长: ${timelineDuration.toFixed(2)}s`);
   return { srt, subtitleCount: cues.length, timelineDuration, originalDuration: media.duration };
+}
+
+function mapGlobalTimeToOrderedTimeline(time, keepSegments) {
+  const sourceTime = Number(time);
+  if (!Number.isFinite(sourceTime)) return null;
+  let timelineOffset = 0;
+  for (const seg of keepSegments) {
+    const duration = seg.end - seg.start;
+    if (sourceTime >= seg.start - 0.001 && sourceTime <= seg.end + 0.001) {
+      return timelineOffset + Math.max(0, Math.min(duration, sourceTime - seg.start));
+    }
+    timelineOffset += duration;
+  }
+  return null;
+}
+
+function normalizeSubtitleCuesForOrderedTimeline(subtitles, keepSegments) {
+  return subtitles
+    .map(item => {
+      let text = String(item.text || '').replace(/\r\n/g, '\n').replace(/\r/g, '\n').trim();
+      if (!text) return null;
+      let start = null;
+      let end = null;
+      if (Array.isArray(item.words) && item.words.length) {
+        const mappedWords = item.words
+          .map(word => ({
+            start: mapGlobalTimeToOrderedTimeline(word.start, keepSegments),
+            end: mapGlobalTimeToOrderedTimeline(word.end, keepSegments),
+            text: String(word.text || ''),
+          }))
+          .filter(word => word.start != null && word.end != null && word.end > word.start);
+        if (mappedWords.length) {
+          start = mappedWords[0].start;
+          end = mappedWords[mappedWords.length - 1].end;
+          const rebuiltText = mappedWords.map(word => word.text).join('').trim();
+          if (rebuiltText) text = rebuiltText;
+        }
+      } else {
+        start = mapGlobalTimeToOrderedTimeline(item.start, keepSegments);
+        end = mapGlobalTimeToOrderedTimeline(item.end, keepSegments);
+      }
+      if (start == null || end == null || end <= start) return null;
+      return { start, end, text };
+    })
+    .filter(Boolean)
+    .sort((a, b) => a.start - b.start)
+    .map((cue, index, cues) => {
+      const next = cues[index + 1];
+      if (next && cue.end > next.start) cue.end = Math.max(cue.start + 0.04, next.start - 0.001);
+      return cue;
+    })
+    .filter(cue => cue.end > cue.start);
+}
+
+function getMulticamDuration(project) {
+  if (!project) throw new Error('当前目录缺少 multicam_project.json');
+  return multicamUtils.estimateProjectDuration(project);
+}
+
+function getOrderedKeepSegmentsForPayload(project, payload) {
+  return multicamUtils.buildOrderedKeepSegments({
+    deleteList: Array.isArray(payload.segments) ? payload.segments : [],
+    duration: getMulticamDuration(project),
+    paragraphOrder: Array.isArray(payload.paragraphOrder) ? payload.paragraphOrder : [],
+    paragraphs: Array.isArray(payload.paragraphs) ? payload.paragraphs : [],
+  });
+}
+
+function exportSRTForOrderedTimeline(project, payload, subtitles, output) {
+  const keepSegments = getOrderedKeepSegmentsForPayload(project, payload);
+  const timelineDuration = keepSegments.reduce((sum, seg) => sum + (seg.end - seg.start), 0);
+  const cues = normalizeSubtitleCuesForOrderedTimeline(subtitles, keepSegments);
+  const srt = generateSRT(cues);
+  fs.writeFileSync(output, srt);
+  console.log(`✅ 多机位 SRT: ${output}`);
+  console.log(`💬 字幕条数: ${cues.length}, 时间线时长: ${timelineDuration.toFixed(2)}s`);
+  return { srt, subtitleCount: cues.length, timelineDuration, originalDuration: getMulticamDuration(project) };
 }
 
 function sanitizeFilePart(value) {
@@ -693,9 +865,134 @@ function chooseOutputDirectory() {
   }
 }
 
-function exportFinalCutXML(input, deleteList, output) {
+function resolveSourceMediaPath(source) {
+  const candidates = [source.path, source.reviewPath]
+    .filter(Boolean)
+    .map(file => path.resolve(file));
+  const found = candidates.find(file => fs.existsSync(file));
+  if (!found) throw new Error(`找不到多机位素材: ${source.name || source.id}`);
+  return found;
+}
+
+function getSourceMediaInfo(source) {
+  const input = resolveSourceMediaPath(source);
+  let media = {};
+  try {
+    media = probeMedia(input);
+  } catch (err) {
+    media = {};
+  }
+  return {
+    input,
+    duration: Number.isFinite(Number(source.duration)) ? Number(source.duration) : Number(media.duration || 0),
+    width: Number(source.width || media.width || 1920),
+    height: Number(source.height || media.height || 1080),
+    frameDuration: media.frameDuration || '100/3000s',
+    audioChannels: Number(source.audioChannels || media.audioChannels || 2),
+    audioSampleRate: String(source.audioSampleRate || media.audioSampleRate || '48000'),
+  };
+}
+
+function exportMulticamFinalCutXML(project, payload, output) {
+  if (!project || project.mode !== 'multicam') throw new Error('当前目录缺少 multicam_project.json');
+  const sources = Array.isArray(project.sources) ? project.sources : [];
+  if (!sources.length) throw new Error('多机位项目缺少 sources');
+
+  const offsetOverrides = normalizeNumberMap(payload.sourceOffsets || {});
+  const preferredPrimaryId = payload.activeCameraId || '';
+  const primarySource = sources.find(source => source.id === preferredPrimaryId && source.kind === 'video')
+    || sources.find(source => source.primary && source.kind === 'video')
+    || sources.find(source => source.kind === 'video')
+    || sources[0];
+
+  const sourceEntries = sources.map((source, index) => {
+    const media = getSourceMediaInfo(source);
+    return {
+      source,
+      media,
+      assetId: `r${index + 2}`,
+    };
+  });
+  const primaryEntry = sourceEntries.find(entry => entry.source.id === primarySource.id) || sourceEntries[0];
+  const primaryMedia = primaryEntry.media;
+  const keepSegments = getOrderedKeepSegmentsForPayload(project, payload);
+  const timelineDuration = keepSegments.reduce((sum, seg) => sum + (seg.end - seg.start), 0);
+  const projectName = path.basename(output, path.extname(output));
+
+  const resourceLines = [
+    `    <format id="r1" name="FFVideoFormat${primaryMedia.height}p" frameDuration="${primaryMedia.frameDuration}" width="${primaryMedia.width}" height="${primaryMedia.height}"/>`
+  ];
+  sourceEntries.forEach(entry => {
+    const source = entry.source;
+    const media = entry.media;
+    const srcUrl = pathToFileURL(path.resolve(media.input)).href;
+    const hasVideo = source.kind === 'video' ? '1' : '0';
+    const formatAttr = source.kind === 'video' ? ' format="r1"' : '';
+    resourceLines.push(
+      `    <asset id="${entry.assetId}" name="${escapeXml(source.name || path.basename(media.input))}" start="0s" duration="${secondsToFcpxmlTime(media.duration || getMulticamDuration(project))}" hasVideo="${hasVideo}" hasAudio="1" audioSources="1" audioChannels="${media.audioChannels}" audioRate="${media.audioSampleRate}"${formatAttr} src="${escapeXml(srcUrl)}"/>`
+    );
+  });
+
+  let timelineOffset = 0;
+  const spineLines = [];
+  keepSegments.forEach((seg, segmentIndex) => {
+    const segmentDuration = seg.end - seg.start;
+    let videoLane = 1;
+    let audioLane = -1;
+    const orderedEntries = [
+      primaryEntry,
+      ...sourceEntries.filter(entry => entry.source.id !== primaryEntry.source.id)
+    ];
+
+    orderedEntries.forEach(entry => {
+      const source = entry.source;
+      const mapped = multicamUtils.mapGlobalSegmentToSource(
+        seg,
+        { ...source, duration: entry.media.duration },
+        offsetOverrides[source.id]
+      );
+      if (!mapped) return;
+      const isPrimary = source.id === primaryEntry.source.id;
+      const lane = isPrimary ? '' : ` lane="${source.kind === 'audio' ? audioLane-- : videoLane++}"`;
+      const offset = secondsToFcpxmlTime(timelineOffset + mapped.timelineShift);
+      const start = secondsToFcpxmlTime(mapped.start);
+      const duration = secondsToFcpxmlTime(mapped.duration);
+      const label = `${String(segmentIndex + 1).padStart(3, '0')} ${source.name || source.id}`;
+      spineLines.push(`            <asset-clip name="${escapeXml(label)}" ref="${entry.assetId}" offset="${offset}" start="${start}" duration="${duration}"${lane}/>`);
+    });
+
+    timelineOffset += segmentDuration;
+  });
+
+  const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE fcpxml>
+<fcpxml version="1.10">
+  <resources>
+${resourceLines.join('\n')}
+  </resources>
+  <library>
+    <event name="videocut-multicam">
+      <project name="${escapeXml(projectName)}">
+        <sequence format="r1" duration="${secondsToFcpxmlTime(timelineDuration)}" tcStart="0s" tcFormat="NDF" audioLayout="stereo" audioRate="${primaryMedia.audioSampleRate}">
+          <spine>
+${spineLines.join('\n')}
+          </spine>
+        </sequence>
+      </project>
+    </event>
+  </library>
+</fcpxml>
+`;
+
+  fs.writeFileSync(output, xml);
+  console.log(`✅ 多机位 Final Cut XML: ${output}`);
+  console.log(`🎞️ 多轨片段: ${spineLines.length}, 时间线时长: ${timelineDuration.toFixed(2)}s`);
+  return { keepSegments, timelineDuration, originalDuration: getMulticamDuration(project), xml };
+}
+
+function exportFinalCutXML(input, deleteList, output, orderedTimelineRanges = null) {
   const media = probeMedia(input);
-  const keepSegments = computeKeepSegments(deleteList, media.duration);
+  const keepSegments = getTimelineSegments(deleteList, media.duration, orderedTimelineRanges);
   const timelineDuration = keepSegments.reduce((sum, seg) => sum + (seg.end - seg.start), 0);
   const assetName = path.basename(input);
   const projectName = path.basename(output, path.extname(output));
@@ -737,7 +1034,16 @@ ${clips}
 }
 
 // 内置 FFmpeg 剪辑逻辑（filter_complex 精确剪辑 + buffer + crossfade）
-function executeFFmpegCut(input, deleteList, output) {
+function hasVideoStream(input) {
+  try {
+    const result = execSync(`ffprobe -v error -select_streams v:0 -show_entries stream=codec_type -of csv=p=0 "file:${input}"`).toString().trim();
+    return result.includes('video');
+  } catch (err) {
+    return false;
+  }
+}
+
+function executeFFmpegCut(input, deleteList, output, orderedTimelineRanges = null) {
   // 配置参数
   const BUFFER_MS = 120;    // 删除范围前后各扩展 120ms（吃掉尾音和气口）
   const CROSSFADE_MS = 30;  // 音频淡入淡出 30ms
@@ -759,44 +1065,46 @@ function executeFFmpegCut(input, deleteList, output) {
   // 获取视频总时长
   const probeCmd = `ffprobe -v error -show_entries format=duration -of csv=p=0 "file:${input}"`;
   const duration = parseFloat(execSync(probeCmd).toString().trim());
+  const hasVideo = hasVideoStream(input);
 
   const bufferSec = BUFFER_MS / 1000;
   const crossfadeSec = CROSSFADE_MS / 1000;
 
-  // 不扩展删除范围，使用精确边界（防止吃掉相邻保留字的头尾音）
-  const expandedDelete = deleteList
-    .map(seg => ({
-      start: Math.max(0, seg.start - audioOffset),
-      end: Math.min(duration, seg.end - audioOffset)
-    }))
-    .sort((a, b) => a.start - b.start);
+  let keepSegments = normalizeOrderedTimelineRanges(orderedTimelineRanges, duration);
+  let mergedDeleteCount = 0;
 
-  // 合并重叠 + 间隙小于 200ms 的相邻删除段（避免产生无意义碎片）
-  const MERGE_GAP = 0.2;
-  const mergedDelete = [];
-  for (const seg of expandedDelete) {
-    if (mergedDelete.length === 0 || seg.start > mergedDelete[mergedDelete.length - 1].end + MERGE_GAP) {
-      mergedDelete.push({ ...seg });
-    } else {
-      mergedDelete[mergedDelete.length - 1].end = Math.max(mergedDelete[mergedDelete.length - 1].end, seg.end);
+  if (!keepSegments.length) {
+    // 不扩展删除范围，使用精确边界（防止吃掉相邻保留字的头尾音）
+    const expandedDelete = deleteList
+      .map(seg => ({
+        start: Math.max(0, seg.start - audioOffset),
+        end: Math.min(duration, seg.end - audioOffset)
+      }))
+      .sort((a, b) => a.start - b.start);
+
+    // 合并重叠 + 间隙小于 200ms 的相邻删除段（避免产生无意义碎片）
+    const MERGE_GAP = 0.2;
+    const mergedDelete = [];
+    for (const seg of expandedDelete) {
+      if (mergedDelete.length === 0 || seg.start > mergedDelete[mergedDelete.length - 1].end + MERGE_GAP) {
+        mergedDelete.push({ ...seg });
+      } else {
+        mergedDelete[mergedDelete.length - 1].end = Math.max(mergedDelete[mergedDelete.length - 1].end, seg.end);
+      }
     }
-  }
+    mergedDeleteCount = mergedDelete.length;
 
-  // 计算保留片段
-  const keepSegments = [];
-  let cursor = 0;
-
-  for (const del of mergedDelete) {
-    if (del.start > cursor) {
-      keepSegments.push({ start: cursor, end: del.start });
+    // 计算保留片段
+    let cursor = 0;
+    for (const del of mergedDelete) {
+      if (del.start > cursor) keepSegments.push({ start: cursor, end: del.start });
+      cursor = del.end;
     }
-    cursor = del.end;
-  }
-  if (cursor < duration) {
-    keepSegments.push({ start: cursor, end: duration });
+    if (cursor < duration) keepSegments.push({ start: cursor, end: duration });
   }
 
-  console.log(`保留 ${keepSegments.length} 个片段，删除 ${mergedDelete.length} 个片段`);
+  if (!keepSegments.length) throw new Error('没有可渲染的保留片段');
+  console.log(`保留 ${keepSegments.length} 个片段，删除 ${mergedDeleteCount} 个片段`);
 
   // 生成 filter_complex（带 crossfade）
   let filters = [];
@@ -804,13 +1112,17 @@ function executeFFmpegCut(input, deleteList, output) {
 
   for (let i = 0; i < keepSegments.length; i++) {
     const seg = keepSegments[i];
-    filters.push(`[0:v]trim=start=${seg.start.toFixed(3)}:end=${seg.end.toFixed(3)},setpts=PTS-STARTPTS[v${i}]`);
+    if (hasVideo) {
+      filters.push(`[0:v]trim=start=${seg.start.toFixed(3)}:end=${seg.end.toFixed(3)},setpts=PTS-STARTPTS[v${i}]`);
+      vconcat += `[v${i}]`;
+    }
     filters.push(`[0:a]atrim=start=${seg.start.toFixed(3)}:end=${seg.end.toFixed(3)},asetpts=PTS-STARTPTS[a${i}]`);
-    vconcat += `[v${i}]`;
   }
 
-  // 视频直接 concat
-  filters.push(`${vconcat}concat=n=${keepSegments.length}:v=1:a=0[outv]`);
+  // 视频直接 concat；纯音频素材跳过视频轨
+  if (hasVideo) {
+    filters.push(`${vconcat}concat=n=${keepSegments.length}:v=1:a=0[outv]`);
+  }
 
   // 音频使用 acrossfade 逐个拼接（消除接缝咔声）
   if (keepSegments.length === 1) {
@@ -830,7 +1142,9 @@ function executeFFmpegCut(input, deleteList, output) {
   const encoder = getEncoder();
   console.log(`✂️ 执行 FFmpeg 精确剪辑（${encoder.label}）...`);
 
-  const cmd = `ffmpeg -y -i "file:${input}" -filter_complex "${filterComplex}" -map "[outv]" -map "[outa]" -c:v ${encoder.name} ${encoder.args} -c:a aac -b:a 192k "file:${output}"`;
+  const cmd = hasVideo
+    ? `ffmpeg -y -i "file:${input}" -filter_complex "${filterComplex}" -map "[outv]" -map "[outa]" -c:v ${encoder.name} ${encoder.args} -c:a aac -b:a 192k "file:${output}"`
+    : `ffmpeg -y -i "file:${input}" -filter_complex "${filterComplex}" -map "[outa]" -c:a aac -b:a 192k "file:${output}"`;
 
   try {
     execSync(cmd, { stdio: 'pipe' });

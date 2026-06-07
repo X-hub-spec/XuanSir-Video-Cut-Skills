@@ -1,0 +1,231 @@
+{
+  "version": 1,
+  "mode": "single",
+  "videoFile": "/Users/xuansir/Documents/粗剪skills优化/demo/Export/source/Export.M4V",
+  "projectTitle": "口播粗剪校样",
+  "selectedIndices": [
+    0,
+    31,
+    39,
+    40,
+    41,
+    42,
+    43,
+    44,
+    45,
+    46,
+    47,
+    48,
+    49,
+    50,
+    65,
+    66,
+    67,
+    68,
+    69,
+    70,
+    71,
+    72,
+    73,
+    74,
+    75,
+    76,
+    77,
+    78,
+    79,
+    82,
+    98
+  ],
+  "textOverrides": {
+    "106": "AI",
+    "107": ""
+  },
+  "currentTime": 23.5,
+  "playbackRate": 1,
+  "selectedBgm": "Assassin's Tango.m4a",
+  "activeMainView": "subtitle",
+  "subtitleBreakAfterIndices": [
+    0,
+    12,
+    20,
+    31,
+    55,
+    91,
+    98
+  ],
+  "subtitleMergedStartIndices": [],
+  "manualParagraphBreakAfterIndices": [
+    0,
+    35,
+    50
+  ],
+  "paragraphOrderStartIndices": [
+    0,
+    1,
+    36,
+    51
+  ],
+  "sourceOffsets": {},
+  "speakerNames": {},
+  "activeCameraId": "",
+  "paragraphOrder": [
+    "p-0",
+    "p-1",
+    "p-36",
+    "p-51"
+  ],
+  "paragraphs": [
+    {
+      "id": "p-0",
+      "start": 0,
+      "end": 0.4,
+      "startIndex": 0
+    },
+    {
+      "id": "p-1",
+      "start": 0.4,
+      "end": 7.44,
+      "startIndex": 1
+    },
+    {
+      "id": "p-36",
+      "start": 7.44,
+      "end": 13.58,
+      "startIndex": 36
+    },
+    {
+      "id": "p-51",
+      "start": 13.58,
+      "end": 26.12,
+      "startIndex": 51
+    }
+  ],
+  "wordCount": 113,
+  "deleteSegments": [
+    {
+      "start": 0,
+      "end": 0.4
+    },
+    {
+      "start": 6.74,
+      "end": 6.96
+    },
+    {
+      "start": 7.84,
+      "end": 8.84
+    },
+    {
+      "start": 8.84,
+      "end": 9.84
+    },
+    {
+      "start": 9.84,
+      "end": 10.5
+    },
+    {
+      "start": 10.5,
+      "end": 10.86
+    },
+    {
+      "start": 10.86,
+      "end": 11.02
+    },
+    {
+      "start": 11.02,
+      "end": 11.16
+    },
+    {
+      "start": 11.16,
+      "end": 11.44
+    },
+    {
+      "start": 11.44,
+      "end": 11.56
+    },
+    {
+      "start": 11.56,
+      "end": 11.72
+    },
+    {
+      "start": 11.72,
+      "end": 11.94
+    },
+    {
+      "start": 11.94,
+      "end": 12.94
+    },
+    {
+      "start": 12.94,
+      "end": 13.58
+    },
+    {
+      "start": 16.06,
+      "end": 16.82
+    },
+    {
+      "start": 16.82,
+      "end": 17
+    },
+    {
+      "start": 17,
+      "end": 17.18
+    },
+    {
+      "start": 17.18,
+      "end": 17.52
+    },
+    {
+      "start": 17.52,
+      "end": 17.7
+    },
+    {
+      "start": 17.7,
+      "end": 17.88
+    },
+    {
+      "start": 17.88,
+      "end": 17.98
+    },
+    {
+      "start": 17.98,
+      "end": 18.1
+    },
+    {
+      "start": 18.1,
+      "end": 18.32
+    },
+    {
+      "start": 18.32,
+      "end": 18.44
+    },
+    {
+      "start": 18.44,
+      "end": 18.54
+    },
+    {
+      "start": 18.54,
+      "end": 18.68
+    },
+    {
+      "start": 18.68,
+      "end": 19
+    },
+    {
+      "start": 19,
+      "end": 20
+    },
+    {
+      "start": 20,
+      "end": 20.4
+    },
+    {
+      "start": 20.64,
+      "end": 20.9
+    },
+    {
+      "start": 23.28,
+      "end": 23.5
+    }
+  ],
+  "savedAt": "2026-06-06T07:33:40.330Z"
+}

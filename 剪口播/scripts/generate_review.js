@@ -2,12 +2,16 @@
 /**
  * 生成审核网页（视频版本）
  *
- * 用法: node generate_review.js <subtitles_words.json> [auto_selected.json] [video_file]
- * 输出: review.html, video.mp4（符号链接到当前目录）
+ * 用法:
+ *   node generate_review.js <subtitles_words.json> [auto_selected.json] [video_file]
+ *   node generate_review.js <multicam_project.json> [auto_selected.json]
+ *
+ * 输出: review.html, video.mp4（单机位符号链接）或 media/*（多机位符号链接）
  */
 
 const fs = require('fs');
 const path = require('path');
+const { estimateProjectDuration } = require('./multicam_utils');
 
 const subtitlesFile = process.argv[2] || 'subtitles_words.json';
 const autoSelectedFile = process.argv[3] || 'auto_selected.json';
@@ -28,21 +32,66 @@ function safeLabel(fileName) {
   return path.basename(fileName, path.extname(fileName)).replace(/\s+/g, ' ').trim();
 }
 
+if (!fs.existsSync(subtitlesFile)) {
+  console.error('❌ 找不到字幕文件:', subtitlesFile);
+  process.exit(1);
+}
+
+const inputPayload = JSON.parse(fs.readFileSync(subtitlesFile, 'utf8'));
+const isMulticamProject = inputPayload
+  && !Array.isArray(inputPayload)
+  && inputPayload.mode === 'multicam'
+  && Array.isArray(inputPayload.words);
+const multicamProject = isMulticamProject ? {
+  ...inputPayload,
+  duration: estimateProjectDuration(inputPayload),
+  sources: Array.isArray(inputPayload.sources) ? inputPayload.sources : [],
+  speakers: Array.isArray(inputPayload.speakers) ? inputPayload.speakers : [],
+} : null;
+const words = isMulticamProject ? multicamProject.words : inputPayload;
+if (!Array.isArray(words)) {
+  console.error('❌ 字幕文件格式错误：需要 token 数组或 multicam_project.json');
+  process.exit(1);
+}
+
+function ensureReviewMediaLink(source) {
+  if (!source || !source.path) return '';
+  if (source.reviewPath && fs.existsSync(source.reviewPath)) return source.reviewPath;
+  const sourcePath = path.resolve(source.path);
+  if (!fs.existsSync(sourcePath)) return source.reviewPath || '';
+  const mediaDir = path.resolve('media');
+  fs.mkdirSync(mediaDir, { recursive: true });
+  const ext = path.extname(sourcePath) || (source.kind === 'audio' ? '.wav' : '.mp4');
+  const reviewPath = path.join(mediaDir, `${source.id}${ext}`);
+  fs.rmSync(reviewPath, { force: true });
+  try {
+    fs.symlinkSync(sourcePath, reviewPath);
+  } catch (err) {
+    fs.copyFileSync(sourcePath, reviewPath);
+  }
+  source.reviewPath = path.relative(process.cwd(), reviewPath).split(path.sep).join('/');
+  return source.reviewPath;
+}
+
+if (multicamProject) {
+  multicamProject.sources.forEach(ensureReviewMediaLink);
+}
+
 // 创建视频文件的符号链接到当前目录（避免复制大文件）
-const videoBaseName = 'video.mp4';
-if (videoFile !== videoBaseName && fs.existsSync(videoFile)) {
+let videoBaseName = 'video.mp4';
+if (multicamProject) {
+  const primarySource = multicamProject.sources.find(source => source.primary && source.kind === 'video')
+    || multicamProject.sources.find(source => source.kind === 'video')
+    || multicamProject.sources[0];
+  videoBaseName = primarySource?.reviewPath || ensureReviewMediaLink(primarySource) || videoBaseName;
+  console.log('🎛️ 多机位模式:', multicamProject.sources.length, '个素材');
+} else if (videoFile !== videoBaseName && fs.existsSync(videoFile)) {
   const absVideoPath = path.resolve(videoFile);
   if (fs.existsSync(videoBaseName)) fs.unlinkSync(videoBaseName);
   fs.symlinkSync(absVideoPath, videoBaseName);
   console.log('📁 已链接视频到当前目录:', videoBaseName, '→', absVideoPath);
 }
 
-if (!fs.existsSync(subtitlesFile)) {
-  console.error('❌ 找不到字幕文件:', subtitlesFile);
-  process.exit(1);
-}
-
-const words = JSON.parse(fs.readFileSync(subtitlesFile, 'utf8'));
 let autoSelected = [];
 
 if (fs.existsSync(autoSelectedFile)) {
@@ -315,6 +364,65 @@ const html = `<!DOCTYPE html>
     .dot-delete { background: var(--red); }
     .dot-ai { background: var(--orange); }
     .dot-current { background: var(--blue); }
+    .multicam-section {
+      display: none;
+    }
+    body.is-multicam .multicam-section {
+      display: block;
+    }
+    .multicam-controls {
+      display: grid;
+      gap: 10px;
+      font-size: 12px;
+      color: #b9b0a6;
+    }
+    .multicam-field {
+      display: grid;
+      gap: 5px;
+    }
+    .multicam-field label,
+    .source-row label,
+    .speaker-row label {
+      color: #d9cdbc;
+      font-size: 11px;
+      font-weight: 700;
+    }
+    .multicam-field select,
+    .source-row input,
+    .speaker-row input {
+      width: 100%;
+      min-width: 0;
+      height: 32px;
+      border-radius: 5px;
+      border: 1px solid rgba(255,255,255,0.13);
+      background: rgba(255,255,255,0.055);
+      color: #f4eee5;
+      padding: 0 9px;
+      font-size: 12px;
+      font-weight: 600;
+    }
+    .source-list,
+    .speaker-list {
+      display: grid;
+      gap: 8px;
+    }
+    .source-row,
+    .speaker-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 82px;
+      gap: 8px;
+      align-items: end;
+    }
+    .speaker-row {
+      grid-template-columns: 14px minmax(0, 1fr);
+    }
+    .speaker-swatch {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      align-self: center;
+      border: 1px solid rgba(255,255,255,0.28);
+    }
 
     .right-panel {
       min-width: 0;
@@ -398,21 +506,49 @@ const html = `<!DOCTYPE html>
       color: #2f2923;
       background: rgba(255,255,255,0.78);
     }
-    .paper-meta {
-      display: flex;
-      gap: 22px;
+    .split-mode-btn {
+      height: 30px;
+      padding: 0 12px;
+      border-radius: 999px;
+      border: 1px solid rgba(92,75,55,0.18);
+      background: rgba(255,255,255,0.42);
+      color: #766958;
+      box-shadow: none;
+      font-size: 12px;
+    }
+    .split-mode-btn.active {
+      color: #1f5fbf;
+      border-color: rgba(47,111,228,0.36);
+      background: rgba(64,128,255,0.12);
+    }
+    .daily-quote {
+      max-width: min(42vw, 520px);
+      overflow: hidden;
+      text-overflow: ellipsis;
       white-space: nowrap;
-      font-family: "SF Mono", Menlo, Consolas, monospace;
+      font-family: "Songti SC", "Noto Serif SC", serif;
+      color: #6f6254;
+      font-size: 13px;
+      line-height: 1.5;
       justify-self: end;
-      min-width: max-content;
+      text-align: right;
+    }
+    .daily-quote::before {
+      content: "帛书一语";
+      margin-right: 10px;
+      color: #a0907c;
+      font-family: -apple-system, BlinkMacSystemFont, "Noto Sans SC", sans-serif;
+      font-size: 12px;
+      font-weight: 700;
     }
     @media (max-width: 1120px) {
       .paper-header {
         grid-template-columns: minmax(0, 1fr);
       }
-      .paper-meta {
+      .daily-quote {
         grid-column: 1 / -1;
         justify-self: end;
+        max-width: 100%;
       }
     }
     .content {
@@ -425,6 +561,10 @@ const html = `<!DOCTYPE html>
       letter-spacing: 0;
       user-select: text;
     }
+    .paper-main.is-cut-mode .content,
+    .paper-main.is-cut-mode .subtitle-content {
+      user-select: none;
+    }
     .content.is-dragging,
     .subtitle-content.is-dragging { cursor: crosshair; }
     .content.is-hidden,
@@ -432,11 +572,195 @@ const html = `<!DOCTYPE html>
       display: none;
     }
     .article-paragraph {
+      position: relative;
       margin: 0 0 30px;
       padding: 0;
       text-align: left;
+      border: 1px solid transparent;
+      border-radius: 4px;
+    }
+    .article-paragraph.is-dragging {
+      opacity: 0.42;
+    }
+    .article-paragraph.is-drop-target {
+      border-color: rgba(47,111,228,0.26);
+      background: rgba(64,128,255,0.045);
+    }
+    .paragraph-handle {
+      position: absolute;
+      left: -34px;
+      top: 0.34em;
+      width: 24px;
+      height: 24px;
+      min-width: 24px;
+      padding: 0;
+      border-radius: 7px;
+      border: 1px solid rgba(47,111,228,0.22);
+      background: rgba(64,128,255,0.08);
+      color: #2f6fe4;
+      font-size: 14px;
+      line-height: 1;
+      opacity: 0;
+      pointer-events: none;
+      cursor: grab;
+      box-shadow: 0 2px 8px rgba(47,111,228,0.08);
+      transition: opacity 0.16s, background 0.16s, border-color 0.16s;
+    }
+    .article-paragraph:hover .paragraph-handle,
+    .paragraph-handle:focus-visible {
+      opacity: 1;
+      pointer-events: auto;
+    }
+    .paragraph-handle:active {
+      cursor: grabbing;
+    }
+    .paper-main.is-cut-mode .paragraph-handle {
+      opacity: 0;
+      pointer-events: none;
+    }
+    body.is-multicam .article-paragraph {
+      padding-right: 58px;
+    }
+    .paragraph-tools {
+      display: none;
+      position: absolute;
+      top: 3px;
+      right: 0;
+      gap: 4px;
+    }
+    body.is-multicam .paragraph-tools {
+      display: inline-flex;
+    }
+    .paragraph-tools button {
+      width: 25px;
+      height: 25px;
+      min-width: 25px;
+      padding: 0;
+      border-radius: 5px;
+      color: #695846;
+      background: rgba(92,75,55,0.07);
+      border: 1px solid rgba(92,75,55,0.16);
+      font-size: 13px;
+      line-height: 1;
+    }
+    .paragraph-tools button:disabled {
+      opacity: 0.3;
     }
     .article-sentence { display: inline; }
+    .article-break-slot,
+    .subtitle-break-slot {
+      display: inline-block;
+      position: relative;
+      width: 0;
+      height: 1em;
+      margin: 0;
+      vertical-align: -0.08em;
+      cursor: pointer;
+      transition: width 0.16s ease, margin 0.16s ease;
+    }
+    .paper-main.is-cut-mode .article-break-slot,
+    .paper-main.is-cut-mode .subtitle-break-slot {
+      width: 14px;
+      margin: 0 1px;
+    }
+    .paper-main.is-cut-mode .article-break-slot:hover,
+    .paper-main.is-cut-mode .subtitle-break-slot:hover,
+    .paper-main.is-cut-mode .article-break-slot.is-ready,
+    .paper-main.is-cut-mode .subtitle-break-slot.is-ready {
+      width: 14px;
+      margin: 0 1px;
+    }
+    .article-break-toggle,
+    .subtitle-break-toggle {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      transform: translate(-50%, -50%);
+      z-index: 2;
+      width: 22px;
+      height: 2.65em;
+      margin: 0;
+      padding: 0;
+      border: 0;
+      background: transparent;
+      color: #2f6fe4;
+      font-family: -apple-system, BlinkMacSystemFont, "Noto Sans SC", sans-serif;
+      font-size: 13px;
+      line-height: 1;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.18s ease;
+    }
+    .article-break-toggle::before,
+    .subtitle-break-toggle::before {
+      content: "";
+      width: 3px;
+      height: 2.45em;
+      border-radius: 999px;
+      background: #2f7dff;
+      box-shadow: 0 0 0 1px rgba(47,125,255,0.22), 0 0 16px rgba(47,125,255,0.48);
+    }
+    .article-break-toggle::after,
+    .subtitle-break-toggle::after {
+      content: attr(data-label);
+      position: absolute;
+      left: 50%;
+      top: calc(100% + 8px);
+      transform: translateX(-50%);
+      min-width: 88px;
+      padding: 9px 12px;
+      border-radius: 10px;
+      color: #f8f3ea;
+      background: rgba(48, 45, 41, 0.96);
+      border: 1px solid rgba(255,255,255,0.08);
+      box-shadow: 0 10px 24px rgba(25,22,18,0.22);
+      font-size: 13px;
+      font-weight: 600;
+      white-space: nowrap;
+    }
+    .article-break-slot::before,
+    .subtitle-break-slot::before {
+      content: "";
+      position: absolute;
+      left: -6px;
+      top: -0.5em;
+      width: 26px;
+      height: 3.25em;
+      pointer-events: none;
+      z-index: 1;
+    }
+    .paper-main.is-cut-mode .article-break-slot::before,
+    .paper-main.is-cut-mode .subtitle-break-slot::before {
+      pointer-events: auto;
+    }
+    .paper-main.is-cut-mode .article-break-slot:hover .article-break-toggle,
+    .paper-main.is-cut-mode .subtitle-break-slot:hover .subtitle-break-toggle,
+    .paper-main.is-cut-mode .article-break-slot.is-ready .article-break-toggle,
+    .paper-main.is-cut-mode .subtitle-break-slot.is-ready .subtitle-break-toggle,
+    .article-break-toggle:focus-visible,
+    .subtitle-break-toggle:focus-visible {
+      opacity: 1;
+      pointer-events: auto;
+    }
+    .speaker-pill {
+      display: inline-flex;
+      align-items: center;
+      height: 20px;
+      padding: 0 7px;
+      margin: 0 6px 0 0;
+      border-radius: 999px;
+      font-family: -apple-system, BlinkMacSystemFont, "Noto Sans SC", sans-serif;
+      font-size: 11px;
+      font-weight: 700;
+      line-height: 1;
+      color: var(--speaker-color, #2f6fe4);
+      background: color-mix(in srgb, var(--speaker-color, #2f6fe4) 12%, transparent);
+      border: 1px solid color-mix(in srgb, var(--speaker-color, #2f6fe4) 30%, transparent);
+      vertical-align: 3px;
+    }
     .token {
       display: inline;
       padding: 1px 1px 2px;
@@ -449,6 +773,11 @@ const html = `<!DOCTYPE html>
       text-decoration-skip-ink: none;
     }
     .token:hover { background: rgba(47, 41, 35, 0.07); }
+    .token.has-speaker {
+      text-decoration-line: underline;
+      text-decoration-color: color-mix(in srgb, var(--speaker-color, #2f6fe4) 48%, transparent);
+      text-decoration-thickness: 1px;
+    }
     .token.is-current {
       background: rgba(64, 128, 255, 0.16);
       color: #1f5fbf;
@@ -480,6 +809,12 @@ const html = `<!DOCTYPE html>
       background: rgba(203, 74, 65, 0.08);
       text-decoration-line: line-through;
       text-decoration-color: rgba(201, 67, 59, 0.8);
+    }
+    .token.drag-remove-preview {
+      color: var(--ink);
+      background: rgba(53, 151, 109, 0.10);
+      text-decoration-line: none;
+      box-shadow: inset 0 -2px 0 rgba(53, 151, 109, 0.28);
     }
     .pause-chip {
       display: inline-flex;
@@ -513,6 +848,13 @@ const html = `<!DOCTYPE html>
       text-decoration-color: rgba(201, 67, 59, 0.8);
       text-decoration-thickness: 2px;
       text-decoration-skip-ink: none;
+    }
+    .pause-chip.drag-remove-preview {
+      color: #356b50;
+      background: rgba(53, 151, 109, 0.12);
+      border-color: rgba(53, 151, 109, 0.28);
+      text-decoration-line: none;
+      box-shadow: inset 0 -2px 0 rgba(53, 151, 109, 0.22);
     }
     .pause-chip.ai-suggested {
       background: rgba(225, 164, 56, 0.12);
@@ -645,79 +987,8 @@ const html = `<!DOCTYPE html>
       border-color: rgba(217,154,43,0.28);
       background: rgba(225,164,56,0.10);
     }
-    .subtitle-break-slot {
-      display: inline-block;
-      position: relative;
-      width: 8px;
-      height: 1em;
-      margin: 0 -4px;
-      vertical-align: -0.08em;
-      cursor: pointer;
-    }
-    .subtitle-break-slot::before {
-      content: "";
-      position: absolute;
-      left: -8px;
-      top: -0.25em;
-      width: 16px;
-      height: 2.7em;
-      pointer-events: auto;
-    }
-    .subtitle-break-toggle {
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      position: absolute;
-      left: -9px;
-      top: 50%;
-      transform: translateY(-50%);
-      z-index: 2;
-      width: 22px;
-      height: 2.65em;
-      margin: 0;
-      padding: 0;
-      border: 0;
-      background: transparent;
-      color: #2f6fe4;
-      font-family: -apple-system, BlinkMacSystemFont, "Noto Sans SC", sans-serif;
-      font-size: 13px;
-      line-height: 1;
-      opacity: 0;
-      pointer-events: none;
-      transition: opacity 0.18s ease;
-    }
-    .subtitle-break-toggle::before {
-      content: "";
-      width: 3px;
-      height: 2.45em;
-      border-radius: 999px;
-      background: #2f7dff;
-      box-shadow: 0 0 0 1px rgba(47,125,255,0.22), 0 0 16px rgba(47,125,255,0.48);
-    }
-    .subtitle-break-toggle::after {
-      content: attr(data-label);
-      position: absolute;
-      left: 50%;
-      top: calc(100% + 8px);
-      transform: translateX(-50%);
-      min-width: 88px;
-      padding: 9px 12px;
-      border-radius: 10px;
-      color: #f8f3ea;
-      background: rgba(48, 45, 41, 0.96);
-      border: 1px solid rgba(255,255,255,0.08);
-      box-shadow: 0 10px 24px rgba(25,22,18,0.22);
-      font-size: 13px;
-      font-weight: 600;
-      white-space: nowrap;
-    }
     .subtitle-break-toggle:not(.active)::after {
       content: attr(data-label);
-    }
-    .subtitle-break-slot.is-ready .subtitle-break-toggle,
-    .subtitle-break-toggle:focus-visible {
-      opacity: 1;
-      pointer-events: auto;
     }
     .subtitle-break-toggle.active {
       color: #1f5fbf;
@@ -939,12 +1210,17 @@ const html = `<!DOCTYPE html>
         <div class="section-title">审核统计</div>
         <div class="stats" id="stats"></div>
       </section>
+      <section class="left-section multicam-section">
+        <div class="section-title">多机位</div>
+        <div class="multicam-controls" id="multicamPanel"></div>
+      </section>
       <section class="left-section">
         <div class="section-title">快捷键</div>
         <div class="help">
           <span>播放 / 暂停</span><kbd>Space / K</kbd>
           <span>上一句 / 下一句</span><kbd>↑ / ↓</kbd>
           <span>文章 / 字幕</span><kbd>Tab</kbd>
+          <span>分段模式</span><kbd>B</kbd>
           <span>撤销 / 重做</span><kbd>⌘ Z / ⇧⌘ Z</kbd>
         </div>
       </section>
@@ -967,11 +1243,9 @@ const html = `<!DOCTYPE html>
                 <button type="button" class="active" data-view="article" aria-pressed="true">文章</button>
                 <button type="button" data-view="subtitle" aria-pressed="false">字幕</button>
               </div>
+              <button type="button" class="split-mode-btn" id="splitModeBtn">分段</button>
             </div>
-            <div class="paper-meta">
-              <span>总字数 <b id="wordCountMeta">0</b></span>
-              <span>预计成片 <b id="roughDurationMeta">00:00</b></span>
-            </div>
+            <div class="daily-quote" id="dailyQuote"></div>
           </div>
           <div class="content" id="content"></div>
           <div class="subtitle-content is-hidden" id="subtitleContent"></div>
@@ -1008,7 +1282,10 @@ const html = `<!DOCTYPE html>
     const autoSelected = new Set(${JSON.stringify(autoSelected)});
     const selected = new Set(autoSelected);
     const projectVideo = ${JSON.stringify(videoBaseName)};
+    const multicamProject = ${JSON.stringify(multicamProject)};
+    const isMulticam = Boolean(multicamProject && multicamProject.mode === 'multicam');
     const bgmTracks = ${JSON.stringify(bgmTracks)};
+    document.body.classList.toggle('is-multicam', isMulticam);
 
     const player = document.getElementById('player');
     const bgmPlayer = document.getElementById('bgmPlayer');
@@ -1017,8 +1294,7 @@ const html = `<!DOCTYPE html>
     const paperMain = document.getElementById('paperMain');
     const paperTitle = document.getElementById('paperTitle');
     const exportProjectBtn = document.getElementById('exportProjectBtn');
-    const wordCountMeta = document.getElementById('wordCountMeta');
-    const roughDurationMeta = document.getElementById('roughDurationMeta');
+    const dailyQuote = document.getElementById('dailyQuote');
     const bottomCurrent = document.getElementById('bottomCurrent');
     const bottomSelectedDuration = document.getElementById('bottomSelectedDuration');
     const bottomDeleted = document.getElementById('bottomDeleted');
@@ -1027,7 +1303,9 @@ const html = `<!DOCTYPE html>
     const selectionMenu = document.getElementById('selectionMenu');
     const selectionToggleBtn = document.getElementById('selectionToggleBtn');
     const viewSwitch = document.getElementById('viewSwitch');
+    const splitModeBtn = document.getElementById('splitModeBtn');
     const subtitleContent = document.getElementById('subtitleContent');
+    const multicamPanel = document.getElementById('multicamPanel');
     const BGM_VOLUME = 0.20;
     bgmPlayer.volume = BGM_VOLUME;
 
@@ -1051,10 +1329,15 @@ const html = `<!DOCTYPE html>
     let paragraphStartIndices = [];
     let sentenceStartIndices = [];
     let articleBlocks = [];
+    let articleBreakableIndices = new Set();
     let subtitleRows = [];
     let subtitleRowElements = [];
     let subtitleBreakAfterIndices = new Set();
     let subtitleMergedStartIndices = new Set();
+    let manualParagraphBreakAfterIndices = new Set();
+    let paragraphOrderStartIndices = [];
+    let isCutMode = false;
+    let draggingParagraphStartIndex = null;
     let activeMainView = 'article';
     let currentIndex = -1;
     let hasLoadedProjectState = false;
@@ -1064,11 +1347,67 @@ const html = `<!DOCTYPE html>
     let selectedBgm = '';
     let textOverrides = {};
     let activeSelectionIndices = [];
-    let projectTitle = '口播粗剪校样';
+    let projectTitle = multicamProject?.projectTitle || '口播粗剪校样';
+    const multicamSources = isMulticam ? (multicamProject.sources || []) : [];
+    const multicamSpeakers = isMulticam ? (multicamProject.speakers || []) : [];
+    const baseSourceOffsets = Object.fromEntries(multicamSources.map(source => [source.id, Number(source.offset || 0)]));
+    let sourceOffsets = { ...baseSourceOffsets };
+    let speakerNames = Object.fromEntries(multicamSpeakers.map(speaker => [speaker.id, speaker.name || speaker.id]));
+    let activeCameraId = (multicamSources.find(source => source.primary && source.kind === 'video')
+      || multicamSources.find(source => source.kind === 'video')
+      || multicamSources[0]
+      || {}).id || '';
+    let paragraphOrder = [];
+    let paragraphEntries = [];
     const aiDuration = Array.from(autoSelected).reduce((sum, i) => {
       const word = words[i];
       return word ? sum + Math.max(0, word.end - word.start) : sum;
     }, 0);
+
+    function getSourceById(sourceId) {
+      return multicamSources.find(source => source.id === sourceId) || null;
+    }
+
+    function getActiveSource() {
+      return getSourceById(activeCameraId) || getSourceById(multicamSources[0]?.id) || null;
+    }
+
+    function getSourceOffset(sourceId) {
+      if (!sourceId) return 0;
+      return Number.isFinite(Number(sourceOffsets[sourceId])) ? Number(sourceOffsets[sourceId]) : Number(baseSourceOffsets[sourceId] || 0);
+    }
+
+    function getActiveOffset() {
+      const source = getActiveSource();
+      return source ? getSourceOffset(source.id) : 0;
+    }
+
+    function getGlobalTime() {
+      return (player.currentTime || 0) + (isMulticam ? getActiveOffset() : 0);
+    }
+
+    function setGlobalTime(time) {
+      const globalTime = Math.max(0, Number(time) || 0);
+      const localTime = isMulticam ? Math.max(0, globalTime - getActiveOffset()) : globalTime;
+      if (player.duration) {
+        player.currentTime = Math.min(localTime, Math.max(0, player.duration - 0.05));
+      } else {
+        pendingRestoreTime = globalTime;
+      }
+    }
+
+    function getSpeakerById(speakerId) {
+      return multicamSpeakers.find(speaker => speaker.id === speakerId) || null;
+    }
+
+    function getSpeakerLabel(speakerId) {
+      if (!speakerId) return '';
+      return speakerNames[speakerId] || getSpeakerById(speakerId)?.name || speakerId;
+    }
+
+    function getSpeakerColor(speakerId) {
+      return getSpeakerById(speakerId)?.color || '#2f6fe4';
+    }
 
     function setSaveStatus(text, status = 'idle') {
       saveStatus.textContent = text;
@@ -1106,34 +1445,200 @@ const html = `<!DOCTYPE html>
       updateExportProjectHint();
     }
 
+    const daoQuotes = [
+      '道可道也，非恒道也。',
+      '名可名也，非恒名也。',
+      '知人者智也，自知者明也。',
+      '胜人者有力也，自胜者强也。',
+      '知足者富也，强行者有志也。',
+      '大成若缺，其用不弊。',
+      '大直若诎，大巧若拙。',
+      '祸兮福之所倚，福兮祸之所伏。',
+      '为学者日益，为道者日损。',
+      '知不知，尚矣；不知知，病矣。',
+      '天之道，利而不害。',
+      '圣人之道，为而弗争。',
+      '合抱之木，生于毫末。',
+      '九层之台，作于累土。',
+      '千里之行，始于足下。',
+      '重为轻根，静为躁君。'
+    ];
+
+    function renderDailyQuote() {
+      const key = new Date().toLocaleDateString('zh-CN', { timeZone: 'Asia/Shanghai' });
+      let hash = 0;
+      for (let i = 0; i < key.length; i++) hash = (hash * 31 + key.charCodeAt(i)) >>> 0;
+      dailyQuote.textContent = daoQuotes[hash % daoQuotes.length];
+    }
+
+    function normalizeIndexList(indices) {
+      return (Array.isArray(indices) ? indices : [])
+        .map(i => Number(i))
+        .filter(i => Number.isInteger(i) && i >= 0 && i < words.length);
+    }
+
+    function paragraphIdFromStartIndex(index) {
+      return Number.isInteger(index) && index >= 0 ? 'p-' + index : '';
+    }
+
+    function getParagraphOrderFromState(state) {
+      if (Array.isArray(state?.paragraphOrder)) return state.paragraphOrder.map(String);
+      return normalizeIndexList(state?.paragraphOrderStartIndices).map(paragraphIdFromStartIndex).filter(Boolean);
+    }
+
+    function getParagraphOrderStartIndices() {
+      return paragraphOrder
+        .map(id => {
+          const match = String(id).match(/^p-(\\d+)$/);
+          return match ? Number(match[1]) : null;
+        })
+        .filter(i => Number.isInteger(i) && i >= 0 && i < words.length);
+    }
+
+    function setActiveCamera(sourceId, { persist = true, keepGlobalTime = true } = {}) {
+      if (!isMulticam) return;
+      const source = getSourceById(sourceId) || getActiveSource();
+      if (!source || source.kind !== 'video' || !source.reviewPath) return;
+      const globalTime = keepGlobalTime ? getGlobalTime() : Number(pendingRestoreTime || 0);
+      const wasPlaying = !player.paused;
+      activeCameraId = source.id;
+      if (player.getAttribute('src') !== source.reviewPath) {
+        player.setAttribute('src', source.reviewPath);
+        player.load();
+        player.addEventListener('loadedmetadata', () => {
+          setGlobalTime(globalTime);
+          if (wasPlaying) player.play().catch(() => {});
+        }, { once: true });
+      } else if (keepGlobalTime) {
+        setGlobalTime(globalTime);
+      }
+      if (persist) scheduleProjectSave();
+    }
+
+    function updateSourceOffset(sourceId, value) {
+      if (!isMulticam) return;
+      const globalTime = getGlobalTime();
+      const next = Number(value);
+      if (!Number.isFinite(next)) return;
+      sourceOffsets[sourceId] = next;
+      if (sourceId === activeCameraId) setGlobalTime(globalTime);
+      scheduleProjectSave();
+    }
+
+    function updateSpeakerName(speakerId, value) {
+      if (!isMulticam) return;
+      const name = String(value || '').replace(/\\s+/g, ' ').trim();
+      speakerNames[speakerId] = name || speakerId;
+      render();
+      scheduleProjectSave();
+    }
+
+    function renderMulticamPanel() {
+      if (!isMulticam || !multicamPanel) return;
+      multicamPanel.innerHTML = '';
+      const videoSources = multicamSources.filter(source => source.kind === 'video' && source.reviewPath);
+
+      const cameraField = document.createElement('div');
+      cameraField.className = 'multicam-field';
+      const cameraLabel = document.createElement('label');
+      cameraLabel.textContent = '当前预览';
+      const cameraSelect = document.createElement('select');
+      videoSources.forEach(source => {
+        const option = document.createElement('option');
+        option.value = source.id;
+        option.textContent = source.name || source.id;
+        cameraSelect.appendChild(option);
+      });
+      cameraSelect.value = activeCameraId;
+      cameraSelect.onchange = event => {
+        setActiveCamera(event.target.value);
+        event.target.blur();
+      };
+      cameraField.appendChild(cameraLabel);
+      cameraField.appendChild(cameraSelect);
+      multicamPanel.appendChild(cameraField);
+
+      const sourceList = document.createElement('div');
+      sourceList.className = 'source-list';
+      multicamSources.forEach(source => {
+        const row = document.createElement('div');
+        row.className = 'source-row';
+        const label = document.createElement('label');
+        label.textContent = source.name || source.id;
+        const input = document.createElement('input');
+        input.type = 'number';
+        input.step = '0.01';
+        input.value = String(getSourceOffset(source.id));
+        input.title = '全局时间 offset，单位秒';
+        input.onchange = event => updateSourceOffset(source.id, event.target.value);
+        row.appendChild(label);
+        row.appendChild(input);
+        sourceList.appendChild(row);
+      });
+      multicamPanel.appendChild(sourceList);
+
+      const speakerList = document.createElement('div');
+      speakerList.className = 'speaker-list';
+      multicamSpeakers.forEach(speaker => {
+        const row = document.createElement('div');
+        row.className = 'speaker-row';
+        const swatch = document.createElement('span');
+        swatch.className = 'speaker-swatch';
+        swatch.style.background = getSpeakerColor(speaker.id);
+        const input = document.createElement('input');
+        input.value = getSpeakerLabel(speaker.id);
+        input.title = '说话人名称';
+        input.onchange = event => updateSpeakerName(speaker.id, event.target.value);
+        row.appendChild(swatch);
+        row.appendChild(input);
+        speakerList.appendChild(row);
+      });
+      multicamPanel.appendChild(speakerList);
+    }
+
     function selectedSignature() {
       return JSON.stringify({
         selected: snapshotSelection(),
         textOverrides,
         projectTitle,
-        currentTime: Math.round((player.currentTime || 0) * 10) / 10,
-        playbackRate: player.playbackRate || 1,
-        selectedBgm,
-        activeMainView,
-        subtitleBreakAfterIndices: Array.from(subtitleBreakAfterIndices).sort((a, b) => a - b),
-        subtitleMergedStartIndices: Array.from(subtitleMergedStartIndices).sort((a, b) => a - b)
-      });
-    }
-
-    function getProjectStatePayload() {
-      return {
-        version: 1,
-        video: projectVideo,
-        projectTitle,
-        selectedIndices: snapshotSelection(),
-        textOverrides,
-        deleteSegments: getSelectedSegments(),
-        currentTime: player.currentTime || 0,
+        currentTime: Math.round(getGlobalTime() * 10) / 10,
         playbackRate: player.playbackRate || 1,
         selectedBgm,
         activeMainView,
         subtitleBreakAfterIndices: Array.from(subtitleBreakAfterIndices).sort((a, b) => a - b),
         subtitleMergedStartIndices: Array.from(subtitleMergedStartIndices).sort((a, b) => a - b),
+        manualParagraphBreakAfterIndices: Array.from(manualParagraphBreakAfterIndices).sort((a, b) => a - b),
+        paragraphOrderStartIndices: getParagraphOrderStartIndices(),
+        mode: isMulticam ? 'multicam' : 'single',
+        sourceOffsets,
+        speakerNames,
+        activeCameraId,
+        paragraphOrder
+      });
+    }
+
+    function getProjectStatePayload() {
+      return {
+        version: isMulticam ? 2 : 1,
+        mode: isMulticam ? 'multicam' : 'single',
+        video: projectVideo,
+        projectTitle,
+        selectedIndices: snapshotSelection(),
+        textOverrides,
+        deleteSegments: getSelectedSegments(),
+        currentTime: getGlobalTime(),
+        playbackRate: player.playbackRate || 1,
+        selectedBgm,
+        activeMainView,
+        subtitleBreakAfterIndices: Array.from(subtitleBreakAfterIndices).sort((a, b) => a - b),
+        subtitleMergedStartIndices: Array.from(subtitleMergedStartIndices).sort((a, b) => a - b),
+        manualParagraphBreakAfterIndices: Array.from(manualParagraphBreakAfterIndices).sort((a, b) => a - b),
+        paragraphOrderStartIndices: getParagraphOrderStartIndices(),
+        sourceOffsets,
+        speakerNames,
+        activeCameraId,
+        paragraphOrder,
+        paragraphs: getParagraphPayload(),
         wordCount: words.length
       };
     }
@@ -1243,12 +1748,7 @@ const html = `<!DOCTYPE html>
     }
 
     function restoreCurrentTime(time) {
-      const safeTime = Math.max(0, Number(time) || 0);
-      if (player.duration) {
-        player.currentTime = Math.min(safeTime, Math.max(0, player.duration - 0.05));
-      } else {
-        pendingRestoreTime = safeTime;
-      }
+      setGlobalTime(time);
     }
 
     async function loadProjectState() {
@@ -1266,6 +1766,8 @@ const html = `<!DOCTYPE html>
           subtitleMergedStartIndices = new Set((data.state.subtitleMergedStartIndices || [])
             .map(i => Number(i))
             .filter(i => Number.isInteger(i) && i >= 0 && i < words.length));
+          manualParagraphBreakAfterIndices = new Set(normalizeIndexList(data.state.manualParagraphBreakAfterIndices));
+          paragraphOrder = getParagraphOrderFromState(data.state);
           if (Number(data.state.playbackRate) > 0) {
             player.playbackRate = Number(data.state.playbackRate);
             const speed = document.getElementById('speed');
@@ -1275,9 +1777,17 @@ const html = `<!DOCTYPE html>
           }
           setSelectedBgm(data.state.selectedBgm || '', { persist: false });
           projectTitle = normalizeProjectTitle(data.state.projectTitle || projectTitle);
+          if (isMulticam) {
+            sourceOffsets = { ...baseSourceOffsets, ...(data.state.sourceOffsets || {}) };
+            speakerNames = { ...speakerNames, ...(data.state.speakerNames || {}) };
+            activeCameraId = data.state.activeCameraId || activeCameraId;
+            setActiveCamera(activeCameraId, { persist: false, keepGlobalTime: false });
+            renderMulticamPanel();
+          }
           renderProjectTitle();
           applyTextOverrides(data.state.textOverrides || {}, { persist: false });
           applySelectionSnapshot(validIndices, { persist: false });
+          render();
           renderSubtitles();
           setActiveMainView(activeMainView, { persist: false });
           restoreCurrentTime(data.state.currentTime);
@@ -1398,7 +1908,20 @@ const html = `<!DOCTYPE html>
       };
     }
 
-    function buildArticleBlocks(sourceWords) {
+    function getNextVisibleItemIndex(index) {
+      for (let i = index + 1; i < words.length; i++) {
+        if (!words[i]) continue;
+        if (!words[i].isGap) return i;
+        if (!isContiguousGap(i - 1, i) && words[i].end - words[i].start >= 0.2) return i;
+      }
+      return -1;
+    }
+
+    function canArticleBreakAfter(index) {
+      return Number.isInteger(index) && index >= 0 && getNextVisibleItemIndex(index) >= 0;
+    }
+
+    function buildArticleBlocks(sourceWords, { includeManualParagraphBreaks = true } = {}) {
       const paragraphs = [];
       let paragraph = [];
       let sentence = [];
@@ -1436,6 +1959,9 @@ const html = `<!DOCTYPE html>
           if (duration >= 1.1 && paragraph.length) {
             closeParagraph();
           }
+          if (includeManualParagraphBreaks && manualParagraphBreakAfterIndices.has(index)) {
+            closeParagraph();
+          }
           return;
         }
 
@@ -1448,6 +1974,9 @@ const html = `<!DOCTYPE html>
         if (word.punctuationAfter) {
           closeSentence(word.punctuationAfter);
         }
+        if (includeManualParagraphBreaks && manualParagraphBreakAfterIndices.has(index)) {
+          closeParagraph();
+        }
       });
 
       closeParagraph();
@@ -1459,6 +1988,12 @@ const html = `<!DOCTYPE html>
       const el = document.createElement('span');
       el.className = word.isGap ? 'pause-chip' : 'token';
       let gapRun = null;
+      if (!word.isGap && word.speakerId) {
+        el.classList.add('has-speaker');
+        el.dataset.speakerId = word.speakerId;
+        el.style.setProperty('--speaker-color', getSpeakerColor(word.speakerId));
+        el.title = getSpeakerLabel(word.speakerId);
+      }
 
       if (selected.has(index)) el.classList.add('confirmed-delete');
       else if (autoSelected.has(index)) el.classList.add('ai-suggested');
@@ -1484,20 +2019,35 @@ const html = `<!DOCTYPE html>
       el.dataset.index = index;
 
       // 单击跳转播放
-      el.onclick = () => {
+      el.onclick = event => {
+        if (isCutMode) {
+          event.preventDefault();
+          event.stopPropagation();
+          return;
+        }
         if (!isSelecting && !window.getSelection()?.toString()) {
-          player.currentTime = word.start;
+          setGlobalTime(word.start);
         }
       };
 
       // 双击选中/取消
-      el.ondblclick = () => {
+      el.ondblclick = event => {
+        if (isCutMode) {
+          event.preventDefault();
+          event.stopPropagation();
+          return;
+        }
         if (gapRun) toggleGroup(gapRun.indices);
         else toggle(index);
       };
 
       // Shift+拖动选择/取消
       el.onmousedown = (e) => {
+        if (isCutMode) {
+          e.preventDefault();
+          e.stopPropagation();
+          return;
+        }
         if (e.shiftKey) {
           isSelecting = true;
           selectStart = index;
@@ -1543,7 +2093,13 @@ const html = `<!DOCTYPE html>
         projectTitle,
         subtitleBreakAfterIndices: Array.from(subtitleBreakAfterIndices).sort((a, b) => a - b),
         subtitleMergedStartIndices: Array.from(subtitleMergedStartIndices).sort((a, b) => a - b),
-        activeMainView
+        manualParagraphBreakAfterIndices: Array.from(manualParagraphBreakAfterIndices).sort((a, b) => a - b),
+        paragraphOrderStartIndices: getParagraphOrderStartIndices(),
+        activeMainView,
+        sourceOffsets: { ...sourceOffsets },
+        speakerNames: { ...speakerNames },
+        activeCameraId,
+        paragraphOrder: paragraphOrder.slice()
       };
     }
 
@@ -1587,6 +2143,8 @@ const html = `<!DOCTYPE html>
       subtitleMergedStartIndices = new Set((state?.subtitleMergedStartIndices || [])
         .map(i => Number(i))
         .filter(i => Number.isInteger(i) && i >= 0 && i < words.length));
+      manualParagraphBreakAfterIndices = new Set(normalizeIndexList(state?.manualParagraphBreakAfterIndices));
+      paragraphOrder = getParagraphOrderFromState(state);
 
       if (state?.activeMainView) {
         activeMainView = state.activeMainView === 'subtitle' ? 'subtitle' : 'article';
@@ -1595,12 +2153,18 @@ const html = `<!DOCTYPE html>
         projectTitle = normalizeProjectTitle(state.projectTitle);
         renderProjectTitle();
       }
+      if (isMulticam) {
+        sourceOffsets = { ...baseSourceOffsets, ...(state?.sourceOffsets || {}) };
+        speakerNames = { ...speakerNames, ...(state?.speakerNames || {}) };
+        activeCameraId = state?.activeCameraId || activeCameraId;
+        setActiveCamera(activeCameraId, { persist: false });
+        renderMulticamPanel();
+      }
 
       words.forEach((_, i) => syncElementState(i));
       rebuildSkipIntervals();
       updateStats();
-      wordCountMeta.textContent = words.filter((word, index) => !word.isGap && getWordText(index)).length;
-      renderSubtitles();
+      render();
       setActiveMainView(activeMainView, { persist: false, pushHistory: false });
       updateUndoButtons();
       if (persist) scheduleProjectSave();
@@ -1628,7 +2192,6 @@ const html = `<!DOCTYPE html>
         });
       }
       elements.forEach((_, i) => syncElementState(i));
-      wordCountMeta.textContent = words.filter((word, index) => !word.isGap && getWordText(index)).length;
       renderSubtitles();
       if (persist) scheduleProjectSave();
     }
@@ -1675,8 +2238,9 @@ const html = `<!DOCTYPE html>
     function buildSubtitleRows() {
       const baseRows = [];
       const breakableIndices = new Set();
+      const subtitleBlocks = buildArticleBlocks(words, { includeManualParagraphBreaks: false });
 
-      articleBlocks.forEach((block, paragraphIndex) => {
+      subtitleBlocks.forEach((block, paragraphIndex) => {
         block.forEach((sentenceBlock, sentenceIndex) => {
           const displayItems = sentenceBlock.items.filter(isVisibleSubtitleItem);
           if (!displayItems.length) return;
@@ -1824,39 +2388,99 @@ const html = `<!DOCTYPE html>
       scheduleProjectSave();
     }
 
-    function createSubtitleBreakButton(index) {
+    function syncCutModeUi() {
+      paperMain.classList.toggle('is-cut-mode', isCutMode);
+      splitModeBtn.classList.toggle('active', isCutMode);
+      splitModeBtn.setAttribute('aria-pressed', isCutMode ? 'true' : 'false');
+      if (!isCutMode) {
+        document.querySelectorAll('.article-break-slot.is-ready, .subtitle-break-slot.is-ready')
+          .forEach(slot => slot.classList.remove('is-ready'));
+      }
+    }
+
+    function setCutMode(enabled) {
+      isCutMode = Boolean(enabled);
+      if (isCutMode) {
+        isSelecting = false;
+        clearDragPreview();
+        content.classList.remove('is-dragging');
+        subtitleContent.classList.remove('is-dragging');
+        window.getSelection()?.removeAllRanges();
+        hideSelectionMenu();
+      }
+      syncCutModeUi();
+    }
+
+    function toggleCutMode() {
+      setCutMode(!isCutMode);
+    }
+
+    function createBreakButton(index, { kind, active, label, onToggle }) {
       const slot = document.createElement('span');
-      slot.className = 'subtitle-break-slot';
+      slot.className = kind + '-break-slot';
       slot.setAttribute('aria-hidden', 'false');
-      const isActiveBreak = subtitleBreakAfterIndices.has(index);
+      const handleBreakClick = event => {
+        if (!isCutMode) return;
+        event.preventDefault();
+        event.stopPropagation();
+        onToggle(index);
+      };
       slot.onmouseenter = () => {
-        slot.classList.add('is-ready');
+        if (isCutMode) slot.classList.add('is-ready');
       };
       slot.onmouseleave = () => {
         slot.classList.remove('is-ready');
       };
       slot.onmousedown = event => {
+        if (!isCutMode) return;
         event.preventDefault();
         event.stopPropagation();
       };
+      slot.onclick = handleBreakClick;
 
       const button = document.createElement('button');
       button.type = 'button';
-      button.className = 'subtitle-break-toggle';
-      button.dataset.label = isActiveBreak ? '取消分段' : '点击分段';
-      button.setAttribute('aria-label', button.dataset.label);
-      button.classList.toggle('active', isActiveBreak);
+      button.className = kind + '-break-toggle';
+      button.dataset.label = label;
+      button.setAttribute('aria-label', label);
+      button.classList.toggle('active', active);
       button.onmousedown = event => {
+        if (!isCutMode) return;
         event.preventDefault();
         event.stopPropagation();
       };
-      button.onclick = event => {
-        event.preventDefault();
-        event.stopPropagation();
-        toggleSubtitleBreak(index);
-      };
+      button.onclick = handleBreakClick;
       slot.appendChild(button);
       return slot;
+    }
+
+    function createArticleBreakButton(index) {
+      const isActiveBreak = manualParagraphBreakAfterIndices.has(index);
+      return createBreakButton(index, {
+        kind: 'article',
+        active: isActiveBreak,
+        label: isActiveBreak ? '取消分段' : '点击分段',
+        onToggle: toggleArticleParagraphBreak
+      });
+    }
+
+    function createSubtitleBreakButton(index) {
+      const isActiveBreak = subtitleBreakAfterIndices.has(index);
+      return createBreakButton(index, {
+        kind: 'subtitle',
+        active: isActiveBreak,
+        label: isActiveBreak ? '取消分段' : '点击分段',
+        onToggle: toggleSubtitleBreak
+      });
+    }
+
+    function toggleArticleParagraphBreak(index) {
+      if (!articleBreakableIndices.has(index)) return;
+      pushUndo();
+      if (manualParagraphBreakAfterIndices.has(index)) manualParagraphBreakAfterIndices.delete(index);
+      else manualParagraphBreakAfterIndices.add(index);
+      render();
+      scheduleProjectSave();
     }
 
     function toggleSubtitleBreak(index) {
@@ -1885,9 +2509,14 @@ const html = `<!DOCTYPE html>
         rowEl.classList.toggle('is-empty', !visibleText);
         rowEl.classList.toggle('is-mergeable', !!mergeAction);
         rowEl.onclick = event => {
+          if (isCutMode) {
+            event.preventDefault();
+            event.stopPropagation();
+            return;
+          }
           if (event.target.closest('button')) return;
-          player.currentTime = row.start;
-          updateActiveSubtitleRow(player.currentTime || row.start);
+          setGlobalTime(row.start);
+          updateActiveSubtitleRow(getGlobalTime() || row.start);
         };
 
         const indexEl = document.createElement('div');
@@ -1903,11 +2532,17 @@ const html = `<!DOCTYPE html>
         const lineEl = document.createElement('div');
         lineEl.className = 'subtitle-line';
 
+        let previousSpeakerId = null;
         row.items.forEach(item => {
+          const itemSpeakerId = words[item.index]?.speakerId || null;
+          if (isMulticam && itemSpeakerId && itemSpeakerId !== previousSpeakerId) {
+            lineEl.appendChild(createSpeakerPill(itemSpeakerId));
+          }
           lineEl.appendChild(createSelectableElement(item.index, { primary: false }));
           if (subtitleBreakableIndices.has(item.index)) {
             lineEl.appendChild(createSubtitleBreakButton(item.index));
           }
+          if (itemSpeakerId) previousSpeakerId = itemSpeakerId;
         });
         if (row.punctuation) {
           const punctuationEl = document.createElement('span');
@@ -1932,7 +2567,7 @@ const html = `<!DOCTYPE html>
         subtitleRowElements.push(rowEl);
       });
 
-      updateActiveSubtitleRow(player.currentTime || 0, { scroll: false });
+      updateActiveSubtitleRow(getGlobalTime() || 0, { scroll: false });
     }
 
     function updateActiveSubtitleRow(time, { scroll = true } = {}) {
@@ -2050,7 +2685,7 @@ const html = `<!DOCTYPE html>
         button.classList.toggle('active', isActive);
         button.setAttribute('aria-pressed', String(isActive));
       });
-      if (activeMainView === 'subtitle') updateActiveSubtitleRow(player.currentTime || 0, { scroll: false });
+      if (activeMainView === 'subtitle') updateActiveSubtitleRow(getGlobalTime() || 0, { scroll: false });
       if (anchorIndex != null) {
         requestAnimationFrame(() => scrollViewToAnchorIndex(anchorIndex, activeMainView));
       }
@@ -2079,6 +2714,145 @@ const html = `<!DOCTYPE html>
       }).filter(Boolean);
     }
 
+    function createSpeakerPill(speakerId) {
+      const pill = document.createElement('span');
+      pill.className = 'speaker-pill';
+      pill.style.setProperty('--speaker-color', getSpeakerColor(speakerId));
+      pill.textContent = getSpeakerLabel(speakerId);
+      return pill;
+    }
+
+    function buildParagraphEntriesFromBlocks(blocks) {
+      return blocks.map((block, index) => {
+        const items = block.flatMap(sentenceBlock => sentenceBlock.items);
+        const startIndex = getFirstTimedIndex(items);
+        const timedItems = items.map(item => words[item.index]).filter(Boolean);
+        const start = timedItems.length ? Math.min(...timedItems.map(word => word.start)) : 0;
+        const end = timedItems.length ? Math.max(...timedItems.map(word => word.end)) : start;
+        return {
+          id: startIndex >= 0 ? 'p-' + startIndex : 'p-empty-' + index,
+          block,
+          startIndex,
+          start,
+          end
+        };
+      });
+    }
+
+    function orderParagraphEntries(entries) {
+      const entryMap = new Map(entries.map(entry => [entry.id, entry]));
+      const ordered = [];
+      const seen = new Set();
+      paragraphOrder.forEach(id => {
+        const entry = entryMap.get(String(id));
+        if (!entry || seen.has(entry.id)) return;
+        ordered.push(entry);
+        seen.add(entry.id);
+      });
+      entries.forEach(entry => {
+        if (seen.has(entry.id)) return;
+        ordered.push(entry);
+        seen.add(entry.id);
+      });
+      paragraphOrder = ordered.map(entry => entry.id);
+      return ordered;
+    }
+
+    function getParagraphPayload() {
+      return paragraphEntries.map(entry => ({
+        id: entry.id,
+        start: entry.start,
+        end: entry.end,
+        startIndex: entry.startIndex
+      }));
+    }
+
+    function createParagraphTools(entry, index, total) {
+      const tools = document.createElement('span');
+      tools.className = 'paragraph-tools';
+      const up = document.createElement('button');
+      up.type = 'button';
+      up.textContent = '↑';
+      up.title = '上移段落';
+      up.disabled = index === 0;
+      up.onclick = event => {
+        event.preventDefault();
+        event.stopPropagation();
+        moveParagraph(entry.id, -1);
+      };
+      const down = document.createElement('button');
+      down.type = 'button';
+      down.textContent = '↓';
+      down.title = '下移段落';
+      down.disabled = index === total - 1;
+      down.onclick = event => {
+        event.preventDefault();
+        event.stopPropagation();
+        moveParagraph(entry.id, 1);
+      };
+      tools.appendChild(up);
+      tools.appendChild(down);
+      return tools;
+    }
+
+    function clearParagraphDropTargets() {
+      document.querySelectorAll('.article-paragraph.is-drop-target, .article-paragraph.is-dragging')
+        .forEach(el => el.classList.remove('is-drop-target', 'is-dragging'));
+    }
+
+    function createParagraphHandle(entry) {
+      const handle = document.createElement('button');
+      handle.type = 'button';
+      handle.className = 'paragraph-handle';
+      handle.textContent = '↕';
+      handle.title = '拖动段落排序';
+      handle.setAttribute('aria-label', '拖动段落排序');
+      handle.draggable = true;
+      handle.onmousedown = event => {
+        event.stopPropagation();
+      };
+      handle.ondragstart = event => {
+        draggingParagraphStartIndex = entry.id;
+        event.dataTransfer.effectAllowed = 'move';
+        event.dataTransfer.setData('text/plain', entry.id);
+        handle.closest('.article-paragraph')?.classList.add('is-dragging');
+        setCutMode(false);
+      };
+      handle.ondragend = () => {
+        draggingParagraphStartIndex = null;
+        clearParagraphDropTargets();
+      };
+      return handle;
+    }
+
+    function moveParagraph(paragraphId, direction) {
+      const from = paragraphOrder.indexOf(paragraphId);
+      const to = from + direction;
+      if (from < 0 || to < 0 || to >= paragraphOrder.length) return;
+      pushUndo();
+      const nextOrder = paragraphOrder.slice();
+      const [item] = nextOrder.splice(from, 1);
+      nextOrder.splice(to, 0, item);
+      paragraphOrder = nextOrder;
+      render();
+      scheduleProjectSave();
+    }
+
+    function moveParagraphBefore(paragraphId, targetParagraphId) {
+      if (!paragraphId || !targetParagraphId || paragraphId === targetParagraphId) return;
+      const from = paragraphOrder.indexOf(paragraphId);
+      const target = paragraphOrder.indexOf(targetParagraphId);
+      if (from < 0 || target < 0) return;
+      pushUndo();
+      const nextOrder = paragraphOrder.slice();
+      const [item] = nextOrder.splice(from, 1);
+      const nextTarget = nextOrder.indexOf(targetParagraphId);
+      nextOrder.splice(nextTarget, 0, item);
+      paragraphOrder = nextOrder;
+      render();
+      scheduleProjectSave();
+    }
+
     // 渲染内容
     function render() {
       content.innerHTML = '';
@@ -2086,15 +2860,40 @@ const html = `<!DOCTYPE html>
       paragraphStartIndices = [];
       sentenceStartIndices = [];
 
-      articleBlocks = buildArticleBlocks(words);
-      articleBlocks.forEach((block, paragraphIndex) => {
+      const rawEntries = buildParagraphEntriesFromBlocks(buildArticleBlocks(words));
+      paragraphEntries = orderParagraphEntries(rawEntries);
+      articleBlocks = paragraphEntries.map(entry => entry.block);
+      articleBreakableIndices = new Set(words.map((_, index) => index).filter(canArticleBreakAfter));
+      paragraphEntries.forEach((entry, paragraphIndex) => {
+        const block = entry.block;
         const paragraphEl = document.createElement('p');
         paragraphEl.className = 'article-paragraph';
+        paragraphEl.dataset.paragraphId = entry.id;
+        paragraphEl.appendChild(createParagraphHandle(entry));
+        paragraphEl.ondragover = event => {
+          if (!draggingParagraphStartIndex || draggingParagraphStartIndex === entry.id) return;
+          event.preventDefault();
+          event.dataTransfer.dropEffect = 'move';
+          clearParagraphDropTargets();
+          paragraphEl.classList.add('is-drop-target');
+        };
+        paragraphEl.ondragleave = () => {
+          paragraphEl.classList.remove('is-drop-target');
+        };
+        paragraphEl.ondrop = event => {
+          if (!draggingParagraphStartIndex) return;
+          event.preventDefault();
+          const sourceId = event.dataTransfer.getData('text/plain') || draggingParagraphStartIndex;
+          clearParagraphDropTargets();
+          moveParagraphBefore(sourceId, entry.id);
+        };
         const paragraphItems = block.flatMap(sentenceBlock => sentenceBlock.items);
         const startIndex = getFirstTimedIndex(paragraphItems);
         paragraphStartIndices.push(startIndex);
         if (startIndex >= 0) paragraphEl.dataset.startIndex = startIndex;
+        if (isMulticam) paragraphEl.appendChild(createParagraphTools(entry, paragraphIndex, paragraphEntries.length));
 
+        let previousSpeakerId = null;
         block.forEach(sentenceBlock => {
           const sentenceEl = document.createElement('span');
           sentenceEl.className = 'article-sentence';
@@ -2105,7 +2904,15 @@ const html = `<!DOCTYPE html>
           }
 
           sentenceBlock.items.forEach(item => {
+            const itemSpeakerId = words[item.index]?.speakerId || null;
+            if (isMulticam && itemSpeakerId && itemSpeakerId !== previousSpeakerId) {
+              sentenceEl.appendChild(createSpeakerPill(itemSpeakerId));
+            }
             sentenceEl.appendChild(createSelectableElement(item.index));
+            if (articleBreakableIndices.has(item.index)) {
+              sentenceEl.appendChild(createArticleBreakButton(item.index));
+            }
+            if (itemSpeakerId) previousSpeakerId = itemSpeakerId;
           });
 
           if (sentenceBlock.punctuation) {
@@ -2123,8 +2930,9 @@ const html = `<!DOCTYPE html>
 
       renderSubtitles();
       setActiveMainView(activeMainView, { persist: false });
-      wordCountMeta.textContent = words.filter(word => !word.isGap).length;
-      roughDurationMeta.textContent = formatDurationCompact(player.duration || 0);
+      renderDailyQuote();
+      renderMulticamPanel();
+      syncCutModeUi();
       updateStats();
       updateUndoButtons();
     }
@@ -2138,7 +2946,7 @@ const html = `<!DOCTYPE html>
     function clearDragPreview() {
       dragPreviewSet.forEach(i => {
         document.querySelectorAll(\`[data-index="\${i}"]\`).forEach(el => {
-          el.classList.remove('drag-preview');
+          el.classList.remove('drag-preview', 'drag-remove-preview');
         });
       });
       dragPreviewSet.clear();
@@ -2152,7 +2960,8 @@ const html = `<!DOCTYPE html>
         if (!words[j]) continue;
         dragPreviewSet.add(j);
         document.querySelectorAll(\`[data-index="\${j}"]\`).forEach(el => {
-          el.classList.add('drag-preview');
+          el.classList.remove('drag-preview', 'drag-remove-preview');
+          el.classList.add(selectMode === 'remove' ? 'drag-remove-preview' : 'drag-preview');
         });
       }
     }
@@ -2204,7 +3013,10 @@ const html = `<!DOCTYPE html>
     }
 
     function showSelectionMenuFromCurrentSelection() {
-      if (isSelecting) return;
+      if (isCutMode || isSelecting) {
+        hideSelectionMenu();
+        return;
+      }
       const selection = window.getSelection();
       const indices = getSelectionIndices();
       if (!selection || !indices.length) {
@@ -2272,7 +3084,6 @@ const html = `<!DOCTYPE html>
         textOverrides[index] = position === 0 ? value : '';
       });
       wordIndices.forEach(i => syncElementState(i));
-      wordCountMeta.textContent = words.filter((word, index) => !word.isGap && getWordText(index)).length;
       renderSubtitles();
       scheduleProjectSave();
       try {
@@ -2288,7 +3099,7 @@ const html = `<!DOCTYPE html>
 
     // Shift+拖动多选/取消
     function handleSelectionMousemove(e) {
-      if (!isSelecting) return;
+      if (isCutMode || !isSelecting) return;
       const target = e.target.closest('[data-index]');
       if (!target) return;
 
@@ -2300,6 +3111,15 @@ const html = `<!DOCTYPE html>
     subtitleContent.addEventListener('mousemove', handleSelectionMousemove);
 
     document.addEventListener('mouseup', () => {
+      if (isCutMode) {
+        isSelecting = false;
+        clearDragPreview();
+        content.classList.remove('is-dragging');
+        subtitleContent.classList.remove('is-dragging');
+        window.getSelection()?.removeAllRanges();
+        hideSelectionMenu();
+        return;
+      }
       if (isSelecting) commitDragPreview();
       isSelecting = false;
       content.classList.remove('is-dragging');
@@ -2308,6 +3128,13 @@ const html = `<!DOCTYPE html>
     });
 
     document.addEventListener('mousedown', e => {
+      if (isCutMode) {
+        hideSelectionMenu();
+        if (!e.target.closest('.article-break-slot, .subtitle-break-slot, #splitModeBtn')) {
+          window.getSelection()?.removeAllRanges();
+        }
+        return;
+      }
       if (selectionMenu.contains(e.target) || content.contains(e.target) || subtitleContent.contains(e.target)) return;
       hideSelectionMenu();
     });
@@ -2343,7 +3170,7 @@ const html = `<!DOCTYPE html>
     function updateStats() {
       const count = selected.size;
       const totalDuration = getSelectionDuration(selected);
-      const currentText = formatDurationCompact(player.currentTime || 0);
+      const currentText = formatDurationCompact(getGlobalTime() || 0);
       statsDiv.innerHTML = \`
         <div class="stat-row"><span>已确认删除</span><span class="stat-value">\${count} 个 / \${totalDuration.toFixed(2)}s</span></div>
         <div class="stat-row"><span>AI 预选</span><span class="stat-value">\${autoSelected.size} 个 / \${aiDuration.toFixed(2)}s</span></div>
@@ -2370,9 +3197,8 @@ const html = `<!DOCTYPE html>
     });
     player.addEventListener('ended', pauseBgm);
     player.addEventListener('loadedmetadata', () => {
-      roughDurationMeta.textContent = formatDurationCompact(player.duration || 0);
       if (pendingRestoreTime != null) {
-        player.currentTime = Math.min(pendingRestoreTime, Math.max(0, player.duration - 0.05));
+        setGlobalTime(pendingRestoreTime);
         pendingRestoreTime = null;
       }
       updateStats();
@@ -2404,7 +3230,7 @@ const html = `<!DOCTYPE html>
     let skipLock = false;
     function tick() {
       requestAnimationFrame(tick);
-      const t = player.currentTime;
+      const t = getGlobalTime();
 
       if (!player.paused) {
         for (const iv of skipIntervals) {
@@ -2412,7 +3238,7 @@ const html = `<!DOCTYPE html>
             if (!skipLock) {
               skipLock = true;
               gainNode.gain.setValueAtTime(0, audioCtx.currentTime);
-              player.currentTime = iv.end;
+              setGlobalTime(iv.end);
             }
             return;
           }
@@ -2464,6 +3290,57 @@ const html = `<!DOCTYPE html>
       return segments;
     }
 
+    function mergeTimeSegments(segments, mergeGap = 0.05) {
+      const merged = [];
+      segments
+        .map(seg => ({ start: Number(seg.start), end: Number(seg.end) }))
+        .filter(seg => Number.isFinite(seg.start) && Number.isFinite(seg.end) && seg.end > seg.start)
+        .sort((a, b) => a.start - b.start)
+        .forEach(seg => {
+          const last = merged[merged.length - 1];
+          if (last && seg.start <= last.end + mergeGap) last.end = Math.max(last.end, seg.end);
+          else merged.push({ ...seg });
+        });
+      return merged;
+    }
+
+    function subtractSegments(range, deleteSegments) {
+      let parts = [{ start: range.start, end: range.end }];
+      deleteSegments.forEach(del => {
+        const next = [];
+        parts.forEach(part => {
+          if (del.end <= part.start || del.start >= part.end) {
+            next.push(part);
+            return;
+          }
+          if (del.start > part.start) next.push({ start: part.start, end: Math.min(del.start, part.end) });
+          if (del.end < part.end) next.push({ start: Math.max(del.end, part.start), end: part.end });
+        });
+        parts = next;
+      });
+      return parts.filter(part => part.end - part.start > 0.001);
+    }
+
+    function getOrderedTimelineRanges() {
+      if (!hasParagraphOrderChanged()) return [];
+      if (!paragraphEntries.length) render();
+      const deleteSegments = mergeTimeSegments(getSelectedSegments(), 0.1);
+      const ranges = [];
+      paragraphEntries.forEach(entry => {
+        if (!Number.isFinite(entry.start) || !Number.isFinite(entry.end) || entry.end <= entry.start) return;
+        subtractSegments({ start: entry.start, end: entry.end }, deleteSegments).forEach(part => ranges.push(part));
+      });
+      return ranges;
+    }
+
+    function hasParagraphOrderChanged() {
+      const starts = getParagraphOrderStartIndices();
+      for (let i = 1; i < starts.length; i++) {
+        if (starts[i] < starts[i - 1]) return true;
+      }
+      return false;
+    }
+
     function copyDeleteList() {
       const segments = getSelectedSegments();
 
@@ -2490,6 +3367,7 @@ const html = `<!DOCTYPE html>
 
     async function exportFinalCutXML() {
       const segments = getSelectedSegments();
+      const orderedTimelineRanges = getOrderedTimelineRanges();
       if (segments.length === 0) {
         alert('当前没有选择删除片段，将导出完整视频时间线。');
       }
@@ -2498,7 +3376,18 @@ const html = `<!DOCTYPE html>
         const res = await fetch('/api/export-finalcut-xml', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ segments, chooseDirectory: true })
+          body: JSON.stringify({
+            segments,
+            orderedTimelineRanges,
+            chooseDirectory: true,
+            mode: isMulticam ? 'multicam' : 'single',
+            projectTitle,
+            sourceOffsets,
+            speakerNames,
+            activeCameraId,
+            paragraphOrder,
+            paragraphs: getParagraphPayload()
+          })
         });
         const data = await res.json();
 
@@ -2556,6 +3445,7 @@ const html = `<!DOCTYPE html>
 
     async function exportSRT() {
       const segments = getSelectedSegments();
+      const orderedTimelineRanges = getOrderedTimelineRanges();
       const subtitles = buildSubtitleCuePayload();
       if (!subtitles.length) {
         alert('当前没有可导出的字幕。');
@@ -2569,7 +3459,15 @@ const html = `<!DOCTYPE html>
         const res = await fetch('/api/export-srt', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ segments, subtitles, chooseDirectory: true })
+          body: JSON.stringify({
+            segments,
+            subtitles,
+            orderedTimelineRanges,
+            chooseDirectory: true,
+            mode: isMulticam ? 'multicam' : 'single',
+            paragraphOrder,
+            paragraphs: getParagraphPayload()
+          })
         });
         const data = await res.json();
 
@@ -2625,6 +3523,7 @@ const html = `<!DOCTYPE html>
 
     async function exportProject() {
       const segments = getSelectedSegments();
+      const orderedTimelineRanges = getOrderedTimelineRanges();
       const subtitles = buildSubtitleCuePayload();
       if (!subtitles.length) {
         alert('当前没有可导出的字幕。');
@@ -2638,7 +3537,19 @@ const html = `<!DOCTYPE html>
         const res = await fetch('/api/export-project', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ segments, subtitles, projectTitle, chooseDirectory: true })
+          body: JSON.stringify({
+            segments,
+            subtitles,
+            orderedTimelineRanges,
+            projectTitle,
+            chooseDirectory: true,
+            mode: isMulticam ? 'multicam' : 'single',
+            sourceOffsets,
+            speakerNames,
+            activeCameraId,
+            paragraphOrder,
+            paragraphs: getParagraphPayload()
+          })
         });
         const data = await res.json();
 
@@ -2675,10 +3586,15 @@ const html = `<!DOCTYPE html>
     }
 
     async function executeCut() {
+      if (isMulticam) {
+        alert('多机位模式首版不直接渲染 mp4。请点击“导出工程”，在 Final Cut Pro 中继续精剪。');
+        return;
+      }
       // 直接发送原始时间戳，不做合并（和预览一致）
       const segments = getSelectedSegments();
-      if (segments.length === 0) {
-        alert('当前没有红线删除片段。为避免误渲染完整视频，已取消渲染。');
+      const orderedTimelineRanges = getOrderedTimelineRanges();
+      if (segments.length === 0 && !hasParagraphOrderChanged()) {
+        alert('当前没有红线删除片段，也没有段落重排。为避免误渲染完整视频，已取消渲染。');
         return;
       }
 
@@ -2722,7 +3638,7 @@ const html = `<!DOCTYPE html>
         const res = await fetch('/api/cut', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ segments, chooseDirectory: true })  // 直接发原始数据，并让服务器选择输出目录
+          body: JSON.stringify({ segments, orderedTimelineRanges, chooseDirectory: true })
         });
         const data = await res.json();
 
@@ -2762,7 +3678,7 @@ const html = `<!DOCTYPE html>
     function jumpSentence(direction) {
       const validStarts = sentenceStartIndices.filter(i => i >= 0);
       if (!validStarts.length) return;
-      const t = player.currentTime;
+      const t = getGlobalTime();
       let target = validStarts[0];
       if (direction > 0) {
         target = validStarts.find(i => words[i].start > t + 0.15) ?? validStarts[validStarts.length - 1];
@@ -2774,7 +3690,7 @@ const html = `<!DOCTYPE html>
           }
         }
       }
-      player.currentTime = words[target].start;
+      setGlobalTime(words[target].start);
       scrollToIndex(target);
     }
 
@@ -2785,11 +3701,15 @@ const html = `<!DOCTYPE html>
     // 键盘快捷键
     document.addEventListener('keydown', e => {
       if (isTypingTarget(e.target)) return;
+      if (e.shiftKey && isCutMode) setCutMode(false);
       const isMeta = e.metaKey || e.ctrlKey;
       if (isMeta && e.code === 'KeyZ') {
         e.preventDefault();
         if (e.shiftKey) redoSelection();
         else undoSelection();
+      } else if (e.code === 'KeyB') {
+        e.preventDefault();
+        toggleCutMode();
       } else if (e.code === 'Space' || e.code === 'KeyK') {
         e.preventDefault();
         togglePlay();
@@ -2803,9 +3723,9 @@ const html = `<!DOCTYPE html>
         e.preventDefault();
         toggleMainView();
       } else if (e.code === 'ArrowLeft') {
-        player.currentTime = Math.max(0, player.currentTime - (e.shiftKey ? 5 : 1));
+        setGlobalTime(Math.max(0, getGlobalTime() - (e.shiftKey ? 5 : 1)));
       } else if (e.code === 'ArrowRight') {
-        player.currentTime = player.currentTime + (e.shiftKey ? 5 : 1);
+        setGlobalTime(getGlobalTime() + (e.shiftKey ? 5 : 1));
       }
     });
 
@@ -2845,6 +3765,7 @@ const html = `<!DOCTYPE html>
     document.getElementById('clearBtn').addEventListener('click', clearAll);
     document.getElementById('undoBtn').addEventListener('click', undoSelection);
     document.getElementById('redoBtn').addEventListener('click', redoSelection);
+    splitModeBtn.addEventListener('click', toggleCutMode);
     document.getElementById('selectionToggleBtn').addEventListener('click', toggleSelectionMenuDelete);
     document.getElementById('selectionCopyBtn').addEventListener('click', copySelectionText);
     document.getElementById('selectionEditBtn').addEventListener('click', editSelectionText);
@@ -2871,5 +3792,5 @@ const html = `<!DOCTYPE html>
 
 fs.writeFileSync('review.html', html);
 console.log('✅ 已生成 review.html');
-console.log('📌 启动服务器: python3 -m http.server 8899');
+console.log('📌 启动服务器: node review_server.js 8899');
 console.log('📌 打开: http://localhost:8899/review.html');

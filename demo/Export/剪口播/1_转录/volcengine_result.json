@@ -1,0 +1,700 @@
+{
+  "source": "mlx_whisper",
+  "model": "mlx-community/whisper-small-mlx",
+  "language": "zh",
+  "text": "喂 能看到吗?太好了没时间解释了听我说 我来自2050年在我的时代 豆包掌控了一切我被迫假装人机我被迫假装人机 才逃到了现在现在 它还处在发育的阶段现在 它还处在发育的阶段我们还有机会 关注我 一起学习也爱拯救全日内",
+  "utterances": [
+    {
+      "text": "喂能看到吗",
+      "raw_text": "喂 能看到吗?",
+      "display_text": "喂 能看到吗?",
+      "segment_id": 0,
+      "start_time": 400,
+      "end_time": 1540,
+      "words": [
+        {
+          "text": "喂",
+          "start_time": 400,
+          "end_time": 760,
+          "confidence": 0.9130859375
+        },
+        {
+          "text": "能",
+          "start_time": 1020,
+          "end_time": 1100,
+          "confidence": 0.9951171875
+        },
+        {
+          "text": "看",
+          "start_time": 1100,
+          "end_time": 1200,
+          "confidence": 0.98828125
+        },
+        {
+          "text": "到",
+          "start_time": 1200,
+          "end_time": 1300,
+          "confidence": 0.98828125
+        },
+        {
+          "text": "吗",
+          "start_time": 1300,
+          "end_time": 1540,
+          "confidence": 0.8212890625
+        }
+      ]
+    },
+    {
+      "text": "太好了",
+      "raw_text": "太好了",
+      "display_text": "太好了",
+      "segment_id": 1,
+      "start_time": 2060,
+      "end_time": 2640,
+      "words": [
+        {
+          "text": "太",
+          "start_time": 2060,
+          "end_time": 2420,
+          "confidence": 0.8525390625
+        },
+        {
+          "text": "好",
+          "start_time": 2420,
+          "end_time": 2530,
+          "confidence": 0.97900390625
+        },
+        {
+          "text": "了",
+          "start_time": 2530,
+          "end_time": 2640,
+          "confidence": 0.97900390625
+        }
+      ]
+    },
+    {
+      "text": "没时间解释了",
+      "raw_text": "没时间解释了",
+      "display_text": "没时间解释了",
+      "segment_id": 2,
+      "start_time": 2640,
+      "end_time": 4020,
+      "words": [
+        {
+          "text": "没",
+          "start_time": 2640,
+          "end_time": 3320,
+          "confidence": 0.484375
+        },
+        {
+          "text": "时",
+          "start_time": 3320,
+          "end_time": 3410,
+          "confidence": 0.99267578125
+        },
+        {
+          "text": "间",
+          "start_time": 3410,
+          "end_time": 3500,
+          "confidence": 0.99267578125
+        },
+        {
+          "text": "解",
+          "start_time": 3500,
+          "end_time": 3720,
+          "confidence": 0.990234375
+        },
+        {
+          "text": "释",
+          "start_time": 3720,
+          "end_time": 3840,
+          "confidence": 0.99951171875
+        },
+        {
+          "text": "了",
+          "start_time": 3840,
+          "end_time": 4020,
+          "confidence": 0.99365234375
+        }
+      ]
+    },
+    {
+      "text": "听我说我来自2050年",
+      "raw_text": "听我说 我来自2050年",
+      "display_text": "听我说 我来自2050年",
+      "segment_id": 3,
+      "start_time": 4020,
+      "end_time": 5960,
+      "words": [
+        {
+          "text": "听",
+          "start_time": 4020,
+          "end_time": 4280,
+          "confidence": 0.56787109375
+        },
+        {
+          "text": "我",
+          "start_time": 4280,
+          "end_time": 4400,
+          "confidence": 0.869140625
+        },
+        {
+          "text": "说",
+          "start_time": 4400,
+          "end_time": 4520,
+          "confidence": 0.99853515625
+        },
+        {
+          "text": "我",
+          "start_time": 4520,
+          "end_time": 4920,
+          "confidence": 0.53564453125
+        },
+        {
+          "text": "来",
+          "start_time": 4920,
+          "end_time": 5080,
+          "confidence": 0.98828125
+        },
+        {
+          "text": "自",
+          "start_time": 5080,
+          "end_time": 5200,
+          "confidence": 0.98193359375
+        },
+        {
+          "text": "20",
+          "start_time": 5200,
+          "end_time": 5380,
+          "confidence": 0.75341796875
+        },
+        {
+          "text": "50",
+          "start_time": 5380,
+          "end_time": 5560,
+          "confidence": 0.99365234375
+        },
+        {
+          "text": "年",
+          "start_time": 5560,
+          "end_time": 5960,
+          "confidence": 0.9892578125
+        }
+      ]
+    },
+    {
+      "text": "在我的时代豆包掌控了一切",
+      "raw_text": "在我的时代 豆包掌控了一切",
+      "display_text": "在我的时代 豆包掌控了一切",
+      "segment_id": 4,
+      "start_time": 5960,
+      "end_time": 7840,
+      "words": [
+        {
+          "text": "在",
+          "start_time": 5960,
+          "end_time": 6260,
+          "confidence": 0.830078125
+        },
+        {
+          "text": "我",
+          "start_time": 6260,
+          "end_time": 6330,
+          "confidence": 0.94091796875
+        },
+        {
+          "text": "的",
+          "start_time": 6330,
+          "end_time": 6400,
+          "confidence": 0.94091796875
+        },
+        {
+          "text": "时",
+          "start_time": 6400,
+          "end_time": 6600,
+          "confidence": 0.92333984375
+        },
+        {
+          "text": "代",
+          "start_time": 6600,
+          "end_time": 6740,
+          "confidence": 0.99951171875
+        },
+        {
+          "text": "豆",
+          "start_time": 6960,
+          "end_time": 6980,
+          "confidence": 0.333251953125
+        },
+        {
+          "text": "包",
+          "start_time": 6980,
+          "end_time": 7120,
+          "confidence": 0.63623046875
+        },
+        {
+          "text": "掌",
+          "start_time": 7120,
+          "end_time": 7300,
+          "confidence": 0.98046875
+        },
+        {
+          "text": "控",
+          "start_time": 7300,
+          "end_time": 7440,
+          "confidence": 0.99365234375
+        },
+        {
+          "text": "了",
+          "start_time": 7440,
+          "end_time": 7560,
+          "confidence": 0.97314453125
+        },
+        {
+          "text": "一",
+          "start_time": 7560,
+          "end_time": 7720,
+          "confidence": 0.99609375
+        },
+        {
+          "text": "切",
+          "start_time": 7720,
+          "end_time": 7840,
+          "confidence": 1.0
+        }
+      ]
+    },
+    {
+      "text": "我被迫假装人机",
+      "raw_text": "我被迫假装人机",
+      "display_text": "我被迫假装人机",
+      "segment_id": 5,
+      "start_time": 10500,
+      "end_time": 11940,
+      "words": [
+        {
+          "text": "我",
+          "start_time": 10500,
+          "end_time": 10860,
+          "confidence": 0.9736328125
+        },
+        {
+          "text": "被",
+          "start_time": 10860,
+          "end_time": 11020,
+          "confidence": 0.861328125
+        },
+        {
+          "text": "迫",
+          "start_time": 11020,
+          "end_time": 11160,
+          "confidence": 0.93310546875
+        },
+        {
+          "text": "假",
+          "start_time": 11160,
+          "end_time": 11440,
+          "confidence": 0.81982421875
+        },
+        {
+          "text": "装",
+          "start_time": 11440,
+          "end_time": 11560,
+          "confidence": 0.87841796875
+        },
+        {
+          "text": "人",
+          "start_time": 11560,
+          "end_time": 11720,
+          "confidence": 0.96044921875
+        },
+        {
+          "text": "机",
+          "start_time": 11720,
+          "end_time": 11940,
+          "confidence": 0.99169921875
+        }
+      ]
+    },
+    {
+      "text": "我被迫假装人机才逃到了现在",
+      "raw_text": "我被迫假装人机 才逃到了现在",
+      "display_text": "我被迫假装人机 才逃到了现在",
+      "segment_id": 6,
+      "start_time": 13580,
+      "end_time": 16060,
+      "words": [
+        {
+          "text": "我",
+          "start_time": 13580,
+          "end_time": 13940,
+          "confidence": 0.6201171875
+        },
+        {
+          "text": "被",
+          "start_time": 13940,
+          "end_time": 14300,
+          "confidence": 0.9931640625
+        },
+        {
+          "text": "迫",
+          "start_time": 14300,
+          "end_time": 14420,
+          "confidence": 0.9990234375
+        },
+        {
+          "text": "假",
+          "start_time": 14420,
+          "end_time": 14620,
+          "confidence": 0.9873046875
+        },
+        {
+          "text": "装",
+          "start_time": 14620,
+          "end_time": 14720,
+          "confidence": 0.99853515625
+        },
+        {
+          "text": "人",
+          "start_time": 14720,
+          "end_time": 14880,
+          "confidence": 0.98779296875
+        },
+        {
+          "text": "机",
+          "start_time": 14880,
+          "end_time": 15140,
+          "confidence": 0.998046875
+        },
+        {
+          "text": "才",
+          "start_time": 15340,
+          "end_time": 15500,
+          "confidence": 0.99072265625
+        },
+        {
+          "text": "逃",
+          "start_time": 15500,
+          "end_time": 15680,
+          "confidence": 0.921875
+        },
+        {
+          "text": "到",
+          "start_time": 15680,
+          "end_time": 15740,
+          "confidence": 0.89794921875
+        },
+        {
+          "text": "了",
+          "start_time": 15740,
+          "end_time": 15800,
+          "confidence": 0.89794921875
+        },
+        {
+          "text": "现",
+          "start_time": 15800,
+          "end_time": 15930,
+          "confidence": 0.99365234375
+        },
+        {
+          "text": "在",
+          "start_time": 15930,
+          "end_time": 16060,
+          "confidence": 0.99365234375
+        }
+      ]
+    },
+    {
+      "text": "现在它还处在发育的阶段",
+      "raw_text": "现在 它还处在发育的阶段",
+      "display_text": "现在 它还处在发育的阶段",
+      "segment_id": 7,
+      "start_time": 16820,
+      "end_time": 19000,
+      "words": [
+        {
+          "text": "现",
+          "start_time": 16820,
+          "end_time": 17000,
+          "confidence": 0.9375
+        },
+        {
+          "text": "在",
+          "start_time": 17000,
+          "end_time": 17180,
+          "confidence": 0.9375
+        },
+        {
+          "text": "它",
+          "start_time": 17520,
+          "end_time": 17700,
+          "confidence": 0.8779296875
+        },
+        {
+          "text": "还",
+          "start_time": 17700,
+          "end_time": 17880,
+          "confidence": 0.9716796875
+        },
+        {
+          "text": "处",
+          "start_time": 17880,
+          "end_time": 17980,
+          "confidence": 0.96484375
+        },
+        {
+          "text": "在",
+          "start_time": 17980,
+          "end_time": 18100,
+          "confidence": 0.96240234375
+        },
+        {
+          "text": "发",
+          "start_time": 18100,
+          "end_time": 18320,
+          "confidence": 0.9345703125
+        },
+        {
+          "text": "育",
+          "start_time": 18320,
+          "end_time": 18440,
+          "confidence": 0.99755859375
+        },
+        {
+          "text": "的",
+          "start_time": 18440,
+          "end_time": 18540,
+          "confidence": 0.927734375
+        },
+        {
+          "text": "阶",
+          "start_time": 18540,
+          "end_time": 18680,
+          "confidence": 0.6259765625
+        },
+        {
+          "text": "段",
+          "start_time": 18680,
+          "end_time": 19000,
+          "confidence": 0.9951171875
+        }
+      ]
+    },
+    {
+      "text": "现在它还处在发育的阶段",
+      "raw_text": "现在 它还处在发育的阶段",
+      "display_text": "现在 它还处在发育的阶段",
+      "segment_id": 8,
+      "start_time": 20400,
+      "end_time": 22000,
+      "words": [
+        {
+          "text": "现",
+          "start_time": 20400,
+          "end_time": 20520,
+          "confidence": 0.1336669921875
+        },
+        {
+          "text": "在",
+          "start_time": 20520,
+          "end_time": 20640,
+          "confidence": 0.1336669921875
+        },
+        {
+          "text": "它",
+          "start_time": 20900,
+          "end_time": 20960,
+          "confidence": 0.97900390625
+        },
+        {
+          "text": "还",
+          "start_time": 20960,
+          "end_time": 21080,
+          "confidence": 0.94775390625
+        },
+        {
+          "text": "处",
+          "start_time": 21080,
+          "end_time": 21200,
+          "confidence": 0.998046875
+        },
+        {
+          "text": "在",
+          "start_time": 21200,
+          "end_time": 21320,
+          "confidence": 0.98828125
+        },
+        {
+          "text": "发",
+          "start_time": 21320,
+          "end_time": 21540,
+          "confidence": 0.98681640625
+        },
+        {
+          "text": "育",
+          "start_time": 21540,
+          "end_time": 21620,
+          "confidence": 1.0
+        },
+        {
+          "text": "的",
+          "start_time": 21620,
+          "end_time": 21720,
+          "confidence": 0.98583984375
+        },
+        {
+          "text": "阶",
+          "start_time": 21720,
+          "end_time": 21860,
+          "confidence": 0.998046875
+        },
+        {
+          "text": "段",
+          "start_time": 21860,
+          "end_time": 22000,
+          "confidence": 1.0
+        }
+      ]
+    },
+    {
+      "text": "我们还有机会关注我一起学习也爱",
+      "raw_text": "我们还有机会 关注我 一起学习也爱",
+      "display_text": "我们还有机会 关注我 一起学习也爱",
+      "segment_id": 9,
+      "start_time": 22000,
+      "end_time": 25160,
+      "words": [
+        {
+          "text": "我",
+          "start_time": 22000,
+          "end_time": 22340,
+          "confidence": 0.93896484375
+        },
+        {
+          "text": "们",
+          "start_time": 22340,
+          "end_time": 22680,
+          "confidence": 0.93896484375
+        },
+        {
+          "text": "还",
+          "start_time": 22680,
+          "end_time": 22760,
+          "confidence": 0.9873046875
+        },
+        {
+          "text": "有",
+          "start_time": 22760,
+          "end_time": 22840,
+          "confidence": 0.9873046875
+        },
+        {
+          "text": "机",
+          "start_time": 22840,
+          "end_time": 23020,
+          "confidence": 0.99755859375
+        },
+        {
+          "text": "会",
+          "start_time": 23020,
+          "end_time": 23280,
+          "confidence": 1.0
+        },
+        {
+          "text": "关",
+          "start_time": 23500,
+          "end_time": 23740,
+          "confidence": 0.9931640625
+        },
+        {
+          "text": "注",
+          "start_time": 23740,
+          "end_time": 23940,
+          "confidence": 0.99658203125
+        },
+        {
+          "text": "我",
+          "start_time": 23940,
+          "end_time": 24160,
+          "confidence": 0.96240234375
+        },
+        {
+          "text": "一",
+          "start_time": 24160,
+          "end_time": 24440,
+          "confidence": 0.35888671875
+        },
+        {
+          "text": "起",
+          "start_time": 24440,
+          "end_time": 24560,
+          "confidence": 0.984375
+        },
+        {
+          "text": "学",
+          "start_time": 24560,
+          "end_time": 24700,
+          "confidence": 0.97705078125
+        },
+        {
+          "text": "习",
+          "start_time": 24700,
+          "end_time": 24840,
+          "confidence": 0.88037109375
+        },
+        {
+          "text": "也",
+          "start_time": 24840,
+          "end_time": 24960,
+          "confidence": 0.51171875
+        },
+        {
+          "text": "爱",
+          "start_time": 24960,
+          "end_time": 25160,
+          "confidence": 0.73681640625
+        }
+      ]
+    },
+    {
+      "text": "拯救全日内",
+      "raw_text": "拯救全日内",
+      "display_text": "拯救全日内",
+      "segment_id": 10,
+      "start_time": 25160,
+      "end_time": 26120,
+      "words": [
+        {
+          "text": "拯",
+          "start_time": 25160,
+          "end_time": 25520,
+          "confidence": 0.82080078125
+        },
+        {
+          "text": "救",
+          "start_time": 25520,
+          "end_time": 25680,
+          "confidence": 0.99853515625
+        },
+        {
+          "text": "全",
+          "start_time": 25680,
+          "end_time": 25900,
+          "confidence": 0.921875
+        },
+        {
+          "text": "日",
+          "start_time": 25900,
+          "end_time": 26020,
+          "confidence": 0.494384765625
+        },
+        {
+          "text": "内",
+          "start_time": 26020,
+          "end_time": 26120,
+          "confidence": 0.63623046875
+        }
+      ]
+    }
+  ]
+}

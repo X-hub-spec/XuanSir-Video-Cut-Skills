@@ -23,6 +23,7 @@
 - **AI 粗剪建议**：自动标记静音、重复表达、口误、重说和明显废话。
 - **文章式审核**：把口播内容排成可阅读的稿件，而不是一堆字幕块。
 - **画线删除**：双击或 Shift 拖动画线，像改稿一样确认删除片段。
+- **多机位模式**：用命名音轨标注说话人，支持多视频/多音频素材同步审核，并导出多轨 FCPXML。
 - **字幕视图**：按字幕行检查内容，提示字幕过长/过短，支持手动分段和合并。
 - **状态自动保存**：删除选择、文字修改、字幕分段、BGM 选择和阅读位置会保存到本地项目。
 - **BGM 参考试听**：剪辑时可选择内置 BGM 试听，最终渲染不会混入 BGM。
@@ -60,6 +61,34 @@ python3 -m venv .venv
 ```text
 帮我剪这个口播视频
 ```
+
+### 多机位模式
+
+准备一个 `multicam_sources.json`，声明视频/音频素材、说话人和 offset：
+
+```json
+{
+  "mode": "multicam",
+  "projectTitle": "访谈粗剪",
+  "sources": [
+    {"id": "cam_a", "kind": "video", "path": "/abs/cam-a.mp4", "name": "机位A", "offset": 0, "primary": true},
+    {"id": "mic_xuan", "kind": "audio", "path": "/abs/xuan.wav", "name": "Xuan麦", "speakerId": "xuan", "offset": 0}
+  ],
+  "speakers": [
+    {"id": "xuan", "name": "Xuan", "color": "#2f6fe4"}
+  ]
+}
+```
+
+然后在审核目录运行：
+
+```bash
+node 剪口播/scripts/prepare_multicam_project.js multicam_sources.json
+node 剪口播/scripts/generate_review.js multicam_project.json
+node 剪口播/scripts/review_server.js 8899
+```
+
+首版多机位模式重点导出 FCPXML 工程，不直接渲染 mp4。
 
 ## 相关文档
 
