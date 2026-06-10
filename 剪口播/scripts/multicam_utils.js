@@ -40,11 +40,28 @@ function normalizeKind(value) {
   return value === 'audio' ? 'audio' : 'video';
 }
 
+function normalizeMode(value) {
+  return value === 'interview' ? 'interview' : 'multicam';
+}
+
+function normalizeSyncMethod(value) {
+  const allowed = new Set(['xml', 'timecode', 'manual', 'waveform', 'anchor', 'unknown']);
+  const method = String(value || '').trim().toLowerCase();
+  return allowed.has(method) ? method : 'manual';
+}
+
+function normalizeConfidence(value, fallback = 0.8) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return fallback;
+  return Math.max(0, Math.min(1, number));
+}
+
 function normalizeManifest(manifest, baseDir = process.cwd()) {
   if (!manifest || typeof manifest !== 'object' || Array.isArray(manifest)) {
     throw new Error('多机位清单格式错误：必须是对象');
   }
-  if (manifest.mode && manifest.mode !== 'multicam') {
+  const mode = normalizeMode(manifest.mode);
+  if (manifest.mode && !['multicam', 'interview'].includes(manifest.mode)) {
     throw new Error(`不支持的模式: ${manifest.mode}`);
   }
   if (!Array.isArray(manifest.sources) || !manifest.sources.length) {
@@ -59,6 +76,8 @@ function normalizeManifest(manifest, baseDir = process.cwd()) {
     if (!source.path) throw new Error(`source ${id} 缺少 path`);
     const absPath = path.resolve(baseDir, source.path);
     const kind = normalizeKind(source.kind);
+    const syncMethod = normalizeSyncMethod(source.syncMethod || manifest.syncMethod || 'manual');
+    const defaultConfidence = syncMethod === 'xml' ? 1 : (syncMethod === 'timecode' ? 0.95 : 0.8);
     return {
       id,
       kind,
@@ -66,6 +85,9 @@ function normalizeManifest(manifest, baseDir = process.cwd()) {
       name: String(source.name || id),
       speakerId: source.speakerId ? sanitizeId(source.speakerId) : null,
       offset: Number.isFinite(Number(source.offset)) ? Number(source.offset) : 0,
+      syncMethod,
+      syncConfidence: normalizeConfidence(source.syncConfidence, defaultConfidence),
+      timecode: source.timecode || '',
       primary: Boolean(source.primary),
       reviewPath: source.reviewPath || '',
       wordsFile: source.wordsFile ? path.resolve(baseDir, source.wordsFile) : '',
@@ -107,8 +129,10 @@ function normalizeManifest(manifest, baseDir = process.cwd()) {
 
   return {
     version: Number.isFinite(Number(manifest.version)) ? Number(manifest.version) : 1,
-    mode: 'multicam',
-    projectTitle: String(manifest.projectTitle || '多机位粗剪校样'),
+    mode,
+    projectTitle: String(manifest.projectTitle || (mode === 'interview' ? '访谈粗剪' : '多机位粗剪校样')),
+    syncMethod: normalizeSyncMethod(manifest.syncMethod || 'manual'),
+    syncConfidence: normalizeConfidence(manifest.syncConfidence, mode === 'interview' ? 0.8 : 1),
     sources,
     speakers: Array.from(speakerMap.values()),
   };
@@ -319,6 +343,7 @@ module.exports = {
   readJson,
   roundTime,
   sanitizeId,
+  normalizeMode,
   normalizeManifest,
   buildProjectFromSourceWords,
   normalizeDeleteSegments,

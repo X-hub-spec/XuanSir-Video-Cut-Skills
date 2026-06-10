@@ -18,8 +18,9 @@ const { pathToFileURL } = require('url');
 const multicamUtils = require('./multicam_utils');
 
 const PORT = process.argv[2] || 8899;
-const PROJECT_STATE_FILE = 'review_project_state.json';
-const MULTICAM_PROJECT_FILE = 'multicam_project.json';
+const PROJECT_STATE_FILE = process.env.REVIEW_STATE_FILE || 'review_project_state.json';
+const MULTICAM_PROJECT_FILE = process.env.MULTICAM_PROJECT_FILE || 'multicam_project.json';
+const INTERVIEW_PROJECT_FILE = process.env.INTERVIEW_PROJECT_FILE || 'interview_project.json';
 const SKILL_ROOT = path.resolve(__dirname, '..', '..');
 const DICTIONARY_FILE = path.join(SKILL_ROOT, '字幕', '词典.txt');
 const MULTICAM_PROJECT = loadMulticamProject();
@@ -27,13 +28,14 @@ let VIDEO_FILE = process.argv[3] || findVideoFile(MULTICAM_PROJECT);
 
 function loadMulticamProject() {
   try {
-    if (!fs.existsSync(MULTICAM_PROJECT_FILE)) return null;
-    const project = JSON.parse(fs.readFileSync(MULTICAM_PROJECT_FILE, 'utf8'));
-    if (!project || project.mode !== 'multicam') return null;
+    const projectFile = fs.existsSync(INTERVIEW_PROJECT_FILE) ? INTERVIEW_PROJECT_FILE : MULTICAM_PROJECT_FILE;
+    if (!fs.existsSync(projectFile)) return null;
+    const project = JSON.parse(fs.readFileSync(projectFile, 'utf8'));
+    if (!project || !['multicam', 'interview'].includes(project.mode)) return null;
     project.duration = multicamUtils.estimateProjectDuration(project);
     return project;
   } catch (err) {
-    console.warn('⚠️ 读取 multicam_project.json 失败:', err.message);
+    console.warn('⚠️ 读取多机位/访谈项目失败:', err.message);
     return null;
   }
 }
@@ -124,10 +126,10 @@ function normalizeParagraphPayload(value) {
 function saveProjectState(state) {
   const selectedIndices = normalizeSelectedIndices(state.selectedIndices || []);
   const textOverrides = normalizeTextOverrides(state.textOverrides || {});
-  const isMulticam = state.mode === 'multicam' || MULTICAM_PROJECT?.mode === 'multicam';
+  const isMulticam = ['multicam', 'interview'].includes(state.mode) || ['multicam', 'interview'].includes(MULTICAM_PROJECT?.mode);
   const payload = {
     version: isMulticam ? 2 : 1,
-    mode: isMulticam ? 'multicam' : 'single',
+    mode: MULTICAM_PROJECT?.mode === 'interview' ? 'interview' : (isMulticam ? 'multicam' : 'single'),
     videoFile: VIDEO_FILE,
     projectTitle: normalizeProjectTitle(state.projectTitle || ''),
     selectedIndices,
@@ -292,13 +294,17 @@ const server = http.createServer((req, res) => {
         const fcpxmlOutput = path.join(outputDir, fcpxmlOutputName);
         const srtOutput = path.join(outputDir, srtOutputName);
 
-        const isMulticamExport = payload.mode === 'multicam' || MULTICAM_PROJECT?.mode === 'multicam';
+        const isMulticamExport = ['multicam', 'interview'].includes(payload.mode) || ['multicam', 'interview'].includes(MULTICAM_PROJECT?.mode);
         const fcpxmlResult = isMulticamExport
           ? exportMulticamFinalCutXML(MULTICAM_PROJECT, payload, fcpxmlOutput)
           : exportFinalCutXML(VIDEO_FILE, deleteList, fcpxmlOutput, orderedTimelineRanges);
         const srtResult = isMulticamExport
           ? exportSRTForOrderedTimeline(MULTICAM_PROJECT, payload, subtitles, srtOutput)
           : exportSRT(VIDEO_FILE, deleteList, subtitles, srtOutput, orderedTimelineRanges);
+        const projectFile = currentProjectFileForMode(payload.mode);
+        const projectCopy = projectFile ? copyIfExists(projectFile, outputDir, path.basename(projectFile)) : null;
+        const stateCopy = copyIfExists(PROJECT_STATE_FILE, outputDir, path.basename(PROJECT_STATE_FILE));
+        const deleteCopy = copyIfExists('delete_segments.json', outputDir, 'delete_segments.json');
 
         sendJson(res, 200, {
           success: true,
@@ -313,6 +319,11 @@ const server = http.createServer((req, res) => {
             output: srtOutput,
             outputName: srtOutputName,
             srt: srtResult.srt
+          },
+          artifacts: {
+            project: projectCopy,
+            state: stateCopy,
+            deleteSegments: deleteCopy
           },
           keepClips: fcpxmlResult.keepSegments.length,
           subtitleCount: srtResult.subtitleCount,
@@ -335,9 +346,6 @@ const server = http.createServer((req, res) => {
     req.on('end', () => {
       try {
         const payload = JSON.parse(body);
-        if (payload.mode === 'multicam' || MULTICAM_PROJECT?.mode === 'multicam') {
-          throw new Error('多机位模式首版不支持直接渲染 mp4，请使用“导出工程”生成 FCPXML');
-        }
         const deleteList = Array.isArray(payload) ? payload : payload.segments;
         const orderedTimelineRanges = Array.isArray(payload.orderedTimelineRanges) ? payload.orderedTimelineRanges : null;
         if (!Array.isArray(deleteList)) {
@@ -350,7 +358,7 @@ const server = http.createServer((req, res) => {
         const outputName = `${baseName}_roughcut.fcpxml`;
         const outputDir = payload.chooseDirectory ? chooseOutputDirectory() : process.cwd();
         const outputFile = path.join(outputDir, outputName);
-        const result = (payload.mode === 'multicam' || MULTICAM_PROJECT?.mode === 'multicam')
+        const result = (['multicam', 'interview'].includes(payload.mode) || ['multicam', 'interview'].includes(MULTICAM_PROJECT?.mode))
           ? exportMulticamFinalCutXML(MULTICAM_PROJECT, payload, outputFile)
           : exportFinalCutXML(VIDEO_FILE, deleteList, outputFile, orderedTimelineRanges);
 
@@ -381,6 +389,7 @@ const server = http.createServer((req, res) => {
         const payload = JSON.parse(body || '{}');
         const deleteList = Array.isArray(payload) ? payload : payload.segments;
         const subtitles = Array.isArray(payload.subtitles) ? payload.subtitles : [];
+        const orderedTimelineRanges = Array.isArray(payload.orderedTimelineRanges) ? payload.orderedTimelineRanges : null;
         if (!Array.isArray(deleteList)) {
           throw new Error('删除列表格式错误');
         }
@@ -395,7 +404,7 @@ const server = http.createServer((req, res) => {
         const outputName = `${baseName}_roughcut.srt`;
         const outputDir = payload.chooseDirectory ? chooseOutputDirectory() : process.cwd();
         const outputFile = path.join(outputDir, outputName);
-        const result = (payload.mode === 'multicam' || MULTICAM_PROJECT?.mode === 'multicam')
+        const result = (['multicam', 'interview'].includes(payload.mode) || ['multicam', 'interview'].includes(MULTICAM_PROJECT?.mode))
           ? exportSRTForOrderedTimeline(MULTICAM_PROJECT, payload, subtitles, outputFile)
           : exportSRT(VIDEO_FILE, deleteList, subtitles, outputFile, orderedTimelineRanges);
 
@@ -424,6 +433,9 @@ const server = http.createServer((req, res) => {
     req.on('end', () => {
       try {
         const payload = JSON.parse(body);
+        if (['multicam', 'interview'].includes(payload.mode) || ['multicam', 'interview'].includes(MULTICAM_PROJECT?.mode)) {
+          throw new Error('访谈/多机位模式不直接渲染 mp4，请使用“导出工程”生成多轨 FCPXML 和 SRT');
+        }
         const deleteList = Array.isArray(payload) ? payload : payload.segments;
         const orderedTimelineRanges = Array.isArray(payload.orderedTimelineRanges) ? payload.orderedTimelineRanges : null;
         if (!Array.isArray(deleteList)) {
@@ -789,7 +801,7 @@ function normalizeSubtitleCuesForOrderedTimeline(subtitles, keepSegments) {
 }
 
 function getMulticamDuration(project) {
-  if (!project) throw new Error('当前目录缺少 multicam_project.json');
+  if (!project) throw new Error('当前目录缺少 multicam_project.json 或 interview_project.json');
   return multicamUtils.estimateProjectDuration(project);
 }
 
@@ -865,6 +877,19 @@ function chooseOutputDirectory() {
   }
 }
 
+function copyIfExists(source, targetDir, targetName = path.basename(source)) {
+  if (!fs.existsSync(source)) return null;
+  const output = path.join(targetDir, targetName);
+  if (path.resolve(source) !== path.resolve(output)) fs.copyFileSync(source, output);
+  return output;
+}
+
+function currentProjectFileForMode(mode) {
+  if (mode === 'interview' || MULTICAM_PROJECT?.mode === 'interview') return INTERVIEW_PROJECT_FILE;
+  if (mode === 'multicam' || MULTICAM_PROJECT?.mode === 'multicam') return MULTICAM_PROJECT_FILE;
+  return '';
+}
+
 function resolveSourceMediaPath(source) {
   const candidates = [source.path, source.reviewPath]
     .filter(Boolean)
@@ -894,7 +919,7 @@ function getSourceMediaInfo(source) {
 }
 
 function exportMulticamFinalCutXML(project, payload, output) {
-  if (!project || project.mode !== 'multicam') throw new Error('当前目录缺少 multicam_project.json');
+  if (!project || !['multicam', 'interview'].includes(project.mode)) throw new Error('当前目录缺少 multicam_project.json 或 interview_project.json');
   const sources = Array.isArray(project.sources) ? project.sources : [];
   if (!sources.length) throw new Error('多机位项目缺少 sources');
 

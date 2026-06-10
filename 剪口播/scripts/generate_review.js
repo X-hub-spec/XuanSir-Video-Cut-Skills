@@ -4,7 +4,7 @@
  *
  * 用法:
  *   node generate_review.js <subtitles_words.json> [auto_selected.json] [video_file]
- *   node generate_review.js <multicam_project.json> [auto_selected.json]
+ *   node generate_review.js <multicam_project.json|interview_project.json> [auto_selected.json]
  *
  * 输出: review.html, video.mp4（单机位符号链接）或 media/*（多机位符号链接）
  */
@@ -40,7 +40,7 @@ if (!fs.existsSync(subtitlesFile)) {
 const inputPayload = JSON.parse(fs.readFileSync(subtitlesFile, 'utf8'));
 const isMulticamProject = inputPayload
   && !Array.isArray(inputPayload)
-  && inputPayload.mode === 'multicam'
+  && ['multicam', 'interview'].includes(inputPayload.mode)
   && Array.isArray(inputPayload.words);
 const multicamProject = isMulticamProject ? {
   ...inputPayload,
@@ -84,7 +84,7 @@ if (multicamProject) {
     || multicamProject.sources.find(source => source.kind === 'video')
     || multicamProject.sources[0];
   videoBaseName = primarySource?.reviewPath || ensureReviewMediaLink(primarySource) || videoBaseName;
-  console.log('🎛️ 多机位模式:', multicamProject.sources.length, '个素材');
+  console.log(multicamProject.mode === 'interview' ? '🎙️ 访谈模式:' : '🎛️ 多机位模式:', multicamProject.sources.length, '个素材');
 } else if (videoFile !== videoBaseName && fs.existsSync(videoFile)) {
   const absVideoPath = path.resolve(videoFile);
   if (fs.existsSync(videoBaseName)) fs.unlinkSync(videoBaseName);
@@ -412,6 +412,13 @@ const html = `<!DOCTYPE html>
       grid-template-columns: minmax(0, 1fr) 82px;
       gap: 8px;
       align-items: end;
+    }
+    .source-sync {
+      grid-column: 1 / -1;
+      margin-top: -4px;
+      color: #8f8578;
+      font-size: 11px;
+      line-height: 1.4;
     }
     .speaker-row {
       grid-template-columns: 14px minmax(0, 1fr);
@@ -1283,9 +1290,12 @@ const html = `<!DOCTYPE html>
     const selected = new Set(autoSelected);
     const projectVideo = ${JSON.stringify(videoBaseName)};
     const multicamProject = ${JSON.stringify(multicamProject)};
-    const isMulticam = Boolean(multicamProject && multicamProject.mode === 'multicam');
+    const isInterview = Boolean(multicamProject && multicamProject.mode === 'interview');
+    const isMulticam = Boolean(multicamProject && ['multicam', 'interview'].includes(multicamProject.mode));
+    const projectMode = isInterview ? 'interview' : (isMulticam ? 'multicam' : 'single');
     const bgmTracks = ${JSON.stringify(bgmTracks)};
     document.body.classList.toggle('is-multicam', isMulticam);
+    document.body.classList.toggle('is-interview', isInterview);
 
     const player = document.getElementById('player');
     const bgmPlayer = document.getElementById('bgmPlayer');
@@ -1347,7 +1357,7 @@ const html = `<!DOCTYPE html>
     let selectedBgm = '';
     let textOverrides = {};
     let activeSelectionIndices = [];
-    let projectTitle = multicamProject?.projectTitle || '口播粗剪校样';
+    let projectTitle = multicamProject?.projectTitle || (isInterview ? '访谈粗剪' : '口播粗剪校样');
     const multicamSources = isMulticam ? (multicamProject.sources || []) : [];
     const multicamSpeakers = isMulticam ? (multicamProject.speakers || []) : [];
     const baseSourceOffsets = Object.fromEntries(multicamSources.map(source => [source.id, Number(source.offset || 0)]));
@@ -1537,6 +1547,14 @@ const html = `<!DOCTYPE html>
       if (!isMulticam || !multicamPanel) return;
       multicamPanel.innerHTML = '';
       const videoSources = multicamSources.filter(source => source.kind === 'video' && source.reviewPath);
+      const syncLabels = {
+        xml: 'XML 对轨',
+        timecode: 'Timecode',
+        manual: '手动校准',
+        waveform: '波形建议',
+        anchor: '锚点校准',
+        unknown: '未知',
+      };
 
       const cameraField = document.createElement('div');
       cameraField.className = 'multicam-field';
@@ -1571,8 +1589,13 @@ const html = `<!DOCTYPE html>
         input.value = String(getSourceOffset(source.id));
         input.title = '全局时间 offset，单位秒';
         input.onchange = event => updateSourceOffset(source.id, event.target.value);
+        const sync = document.createElement('div');
+        sync.className = 'source-sync';
+        const confidence = Math.round(Math.max(0, Math.min(1, Number(source.syncConfidence ?? 0.8))) * 100);
+        sync.textContent = \`\${syncLabels[source.syncMethod] || syncLabels.unknown} · \${confidence}%\`;
         row.appendChild(label);
         row.appendChild(input);
+        row.appendChild(sync);
         sourceList.appendChild(row);
       });
       multicamPanel.appendChild(sourceList);
@@ -1609,7 +1632,7 @@ const html = `<!DOCTYPE html>
         subtitleMergedStartIndices: Array.from(subtitleMergedStartIndices).sort((a, b) => a - b),
         manualParagraphBreakAfterIndices: Array.from(manualParagraphBreakAfterIndices).sort((a, b) => a - b),
         paragraphOrderStartIndices: getParagraphOrderStartIndices(),
-        mode: isMulticam ? 'multicam' : 'single',
+        mode: projectMode,
         sourceOffsets,
         speakerNames,
         activeCameraId,
@@ -1620,7 +1643,7 @@ const html = `<!DOCTYPE html>
     function getProjectStatePayload() {
       return {
         version: isMulticam ? 2 : 1,
-        mode: isMulticam ? 'multicam' : 'single',
+        mode: projectMode,
         video: projectVideo,
         projectTitle,
         selectedIndices: snapshotSelection(),
@@ -2718,7 +2741,7 @@ const html = `<!DOCTYPE html>
       const pill = document.createElement('span');
       pill.className = 'speaker-pill';
       pill.style.setProperty('--speaker-color', getSpeakerColor(speakerId));
-      pill.textContent = getSpeakerLabel(speakerId);
+      pill.textContent = getSpeakerLabel(speakerId) + '：';
       return pill;
     }
 
@@ -3380,7 +3403,7 @@ const html = `<!DOCTYPE html>
             segments,
             orderedTimelineRanges,
             chooseDirectory: true,
-            mode: isMulticam ? 'multicam' : 'single',
+            mode: projectMode,
             projectTitle,
             sourceOffsets,
             speakerNames,
@@ -3464,7 +3487,7 @@ const html = `<!DOCTYPE html>
             subtitles,
             orderedTimelineRanges,
             chooseDirectory: true,
-            mode: isMulticam ? 'multicam' : 'single',
+            mode: projectMode,
             paragraphOrder,
             paragraphs: getParagraphPayload()
           })
@@ -3543,7 +3566,7 @@ const html = `<!DOCTYPE html>
             orderedTimelineRanges,
             projectTitle,
             chooseDirectory: true,
-            mode: isMulticam ? 'multicam' : 'single',
+            mode: projectMode,
             sourceOffsets,
             speakerNames,
             activeCameraId,
@@ -3587,7 +3610,9 @@ const html = `<!DOCTYPE html>
 
     async function executeCut() {
       if (isMulticam) {
-        alert('多机位模式首版不直接渲染 mp4。请点击“导出工程”，在 Final Cut Pro 中继续精剪。');
+        alert(isInterview
+          ? '访谈版首版不直接渲染 mp4。请点击“导出工程”，导出多轨 FCPXML 和 SRT 后在 Final Cut Pro 中继续精剪。'
+          : '多机位模式首版不直接渲染 mp4。请点击“导出工程”，在 Final Cut Pro 中继续精剪。');
         return;
       }
       // 直接发送原始时间戳，不做合并（和预览一致）
