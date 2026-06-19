@@ -19,6 +19,18 @@ const videoFile = process.argv[4] || 'video.mp4';
 
 const BGM_EXTENSIONS = new Set(['.mp3', '.m4a']);
 
+function estimateReviewDuration(payload) {
+  if (payload && Array.isArray(payload.timelineClips) && payload.timelineClips.length) {
+    const declared = Number(payload.duration || 0);
+    const clipMax = payload.timelineClips.reduce((max, clip) => (
+      Math.max(max, Number(clip.globalStart || 0) + Number(clip.duration || 0))
+    ), 0);
+    const wordMax = (payload.words || []).reduce((max, word) => Math.max(max, Number(word.end || 0)), 0);
+    return Math.round(Math.max(declared, clipMax, wordMax) * 1000) / 1000;
+  }
+  return estimateProjectDuration(payload);
+}
+
 function escapeHtml(value) {
   return String(value)
     .replace(/&/g, '&amp;')
@@ -44,7 +56,7 @@ const isMulticamProject = inputPayload
   && Array.isArray(inputPayload.words);
 const multicamProject = isMulticamProject ? {
   ...inputPayload,
-  duration: estimateProjectDuration(inputPayload),
+  duration: estimateReviewDuration(inputPayload),
   sources: Array.isArray(inputPayload.sources) ? inputPayload.sources : [],
   speakers: Array.isArray(inputPayload.speakers) ? inputPayload.speakers : [],
 } : null;
@@ -1202,6 +1214,7 @@ const html = `<!DOCTYPE html>
     <span class="time-readout" id="time">00:00 / 00:00</span>
   </div>
   <div class="selection-menu" id="selectionMenu">
+    <button id="selectionLocateBtn">定位</button>
     <button id="selectionToggleBtn">标记删除</button>
     <button id="selectionCopyBtn">复制</button>
     <button id="selectionEditBtn">修改</button>
@@ -1211,6 +1224,7 @@ const html = `<!DOCTYPE html>
     <aside class="left-panel">
       <div class="monitor-card">
         <video id="player" src="${videoBaseName}" preload="auto"></video>
+        <audio id="timelineAudio" preload="auto"></audio>
         <audio id="bgmPlayer" preload="auto" loop></audio>
       </div>
       <section class="left-section">
@@ -1298,6 +1312,7 @@ const html = `<!DOCTYPE html>
     document.body.classList.toggle('is-interview', isInterview);
 
     const player = document.getElementById('player');
+    const timelineAudio = document.getElementById('timelineAudio');
     const bgmPlayer = document.getElementById('bgmPlayer');
     const bgmSelect = document.getElementById('bgmSelect');
     const timeDisplay = document.getElementById('time');
@@ -1311,6 +1326,7 @@ const html = `<!DOCTYPE html>
     const bottomAi = document.getElementById('bottomAi');
     const saveStatus = document.getElementById('saveStatus');
     const selectionMenu = document.getElementById('selectionMenu');
+    const selectionLocateBtn = document.getElementById('selectionLocateBtn');
     const selectionToggleBtn = document.getElementById('selectionToggleBtn');
     const viewSwitch = document.getElementById('viewSwitch');
     const splitModeBtn = document.getElementById('splitModeBtn');
@@ -1318,10 +1334,18 @@ const html = `<!DOCTYPE html>
     const multicamPanel = document.getElementById('multicamPanel');
     const BGM_VOLUME = 0.20;
     bgmPlayer.volume = BGM_VOLUME;
+    let resumePreviewAudioFromGesture = () => {};
 
     function togglePlay() {
-      if (player.paused) player.play();
-      else player.pause();
+      if (player.paused) {
+        resumePreviewAudioFromGesture();
+        const playPromise = player.play();
+        if (playPromise && typeof playPromise.catch === 'function') {
+          playPromise.catch(() => setSaveStatus('预览待播放', 'dirty'));
+        }
+      } else {
+        player.pause();
+      }
     }
 
     function setPlaybackRate(value) {
@@ -1357,9 +1381,21 @@ const html = `<!DOCTYPE html>
     let selectedBgm = '';
     let textOverrides = {};
     let activeSelectionIndices = [];
+    let playbackGlobalTime = 0;
+    let lastGlobalClockMs = performance.now();
+    let currentPreviewClipId = '';
+    let isSyncingPreview = false;
+    let isSyncingTimelineAudio = false;
     let projectTitle = multicamProject?.projectTitle || (isInterview ? '访谈粗剪' : '口播粗剪校样');
     const multicamSources = isMulticam ? (multicamProject.sources || []) : [];
     const multicamSpeakers = isMulticam ? (multicamProject.speakers || []) : [];
+    const timelineClips = isMulticam && Array.isArray(multicamProject?.timelineClips) ? multicamProject.timelineClips : [];
+    const projectTimelineDuration = Math.max(
+      0,
+      Number(multicamProject?.duration || 0),
+      words.reduce((max, word) => Math.max(max, Number(word?.end || 0)), 0),
+      timelineClips.reduce((max, clip) => Math.max(max, Number(clip?.globalStart || 0) + Number(clip?.duration || 0)), 0)
+    );
     const baseSourceOffsets = Object.fromEntries(multicamSources.map(source => [source.id, Number(source.offset || 0)]));
     let sourceOffsets = { ...baseSourceOffsets };
     let speakerNames = Object.fromEntries(multicamSpeakers.map(speaker => [speaker.id, speaker.name || speaker.id]));
@@ -1367,6 +1403,21 @@ const html = `<!DOCTYPE html>
       || multicamSources.find(source => source.kind === 'video')
       || multicamSources[0]
       || {}).id || '';
+    const defaultPreviewLane = (() => {
+      const primaryClip = timelineClips.find(clip => clip.sourceId === activeCameraId && getSourceById(clip.sourceId)?.kind === 'video');
+      if (primaryClip && Number.isFinite(Number(primaryClip.lane))) return Number(primaryClip.lane);
+      const firstVideoClip = timelineClips.find(clip => getSourceById(clip.sourceId)?.kind === 'video');
+      return Number.isFinite(Number(firstVideoClip?.lane)) ? Number(firstVideoClip.lane) : 0;
+    })();
+    let activePreviewLane = defaultPreviewLane;
+    const transcriptSource = getSourceById(multicamProject?.transcriptSourceId)
+      || multicamSources.find(source => source.kind === 'audio' && /总混音|mix/i.test(source.name || source.id || ''))
+      || multicamSources.find(source => source.kind === 'audio');
+    const timelineAudioSource = transcriptSource?.reviewPath || '';
+    if (isMulticam) {
+      player.muted = true;
+      if (timelineAudioSource) timelineAudio.src = timelineAudioSource;
+    }
     let paragraphOrder = [];
     let paragraphEntries = [];
     const aiDuration = Array.from(autoSelected).reduce((sum, i) => {
@@ -1392,13 +1443,190 @@ const html = `<!DOCTYPE html>
       return source ? getSourceOffset(source.id) : 0;
     }
 
+    function getSourceGroupKey(source) {
+      if (!source) return '';
+      return String(source.path || source.name || source.id || '').toLowerCase();
+    }
+
+    function findTimelineClipByGlobalTime(sourceId, globalTime) {
+      if (!sourceId || !timelineClips.length) return null;
+      const time = Number(globalTime) || 0;
+      return timelineClips.find(clip => {
+        if (clip.sourceId !== sourceId || clip.enabled === false) return false;
+        const start = Number(clip.globalStart || 0);
+        const end = start + Number(clip.duration || 0);
+        return time >= start && time <= end;
+      }) || null;
+    }
+
+    function getTimelineClipEnd(clip) {
+      return Number(clip?.globalStart || 0) + Number(clip?.duration || 0);
+    }
+
+    function getSourceAssetStart(sourceId) {
+      const source = getSourceById(sourceId);
+      return Number.isFinite(Number(source?.assetStart)) ? Number(source.assetStart) : 0;
+    }
+
+    function sourceLocalToMediaTime(sourceId, localTime) {
+      return Number(localTime || 0) - getSourceAssetStart(sourceId);
+    }
+
+    function mediaTimeToSourceLocal(sourceId, mediaTime) {
+      return Number(mediaTime || 0) + getSourceAssetStart(sourceId);
+    }
+
+    function clampMediaTime(time, duration) {
+      const mediaTime = Math.max(0, Number(time) || 0);
+      const mediaDuration = Number(duration);
+      if (!Number.isFinite(mediaDuration) || mediaDuration <= 0) return mediaTime;
+      return Math.min(mediaTime, Math.max(0, mediaDuration - 0.05));
+    }
+
+    function findPreviewClipByGlobalTime(sourceId, globalTime) {
+      if (!timelineClips.length) return null;
+      const time = Number(globalTime) || 0;
+      const activeSource = getSourceById(sourceId);
+      const activeGroup = getSourceGroupKey(activeSource);
+      const videoClips = timelineClips
+        .filter(clip => {
+          if (clip.enabled === false) return false;
+          const source = getSourceById(clip.sourceId);
+          if (!source || source.kind !== 'video' || !source.reviewPath) return false;
+          const start = Number(clip.globalStart || 0);
+          return time >= start && time < start + Number(clip.duration || 0);
+        })
+        .sort((a, b) => Math.abs(Number(a.lane || 0)) - Math.abs(Number(b.lane || 0)));
+      return videoClips.find(clip => Number(clip.lane || 0) === Number(activePreviewLane))
+        || videoClips.find(clip => clip.sourceId === sourceId)
+        || videoClips.find(clip => activeGroup && getSourceGroupKey(getSourceById(clip.sourceId)) === activeGroup)
+        || videoClips.find(clip => Number(clip.lane || 0) === 0)
+        || videoClips[0]
+        || null;
+    }
+
+    function findTimelineClipByLocalTime(sourceId, localTime) {
+      if (!sourceId || !timelineClips.length) return null;
+      const time = Number(localTime) || 0;
+      return timelineClips.find(clip => {
+        if (clip.sourceId !== sourceId || clip.enabled === false) return false;
+        const start = Number(clip.localStart || 0);
+        const end = start + Number(clip.duration || 0);
+        return time >= start && time <= end;
+      }) || null;
+    }
+
+    function globalTimeToSourceLocalTime(sourceId, globalTime) {
+      const clip = findPreviewClipByGlobalTime(sourceId, globalTime) || findTimelineClipByGlobalTime(sourceId, globalTime);
+      if (clip) return Number(clip.localStart || 0) + (Number(globalTime || 0) - Number(clip.globalStart || 0));
+      return Number(globalTime || 0) - getSourceOffset(sourceId);
+    }
+
+    function sourceLocalTimeToGlobalTime(sourceId, localTime) {
+      const clip = findTimelineClipByLocalTime(sourceId, localTime);
+      if (clip) return Number(clip.globalStart || 0) + (Number(localTime || 0) - Number(clip.localStart || 0));
+      return Number(localTime || 0) + getSourceOffset(sourceId);
+    }
+
+    function getCurrentPreviewClip() {
+      if (!currentPreviewClipId) return null;
+      return timelineClips.find(clip => clip.id === currentPreviewClipId) || null;
+    }
+
+    function updateGlobalTimeFromPreview() {
+      if (!isMulticam || isSyncingPreview) return;
+      const clip = getCurrentPreviewClip();
+      if (!clip || player.readyState < 2 || !Number.isFinite(Number(player.currentTime))) return;
+      const sourceLocalTime = mediaTimeToSourceLocal(clip.sourceId, player.currentTime);
+      const localDelta = sourceLocalTime - Number(clip.localStart || 0);
+      const next = Number(clip.globalStart || 0) + localDelta;
+      playbackGlobalTime = projectTimelineDuration
+        ? Math.max(0, Math.min(next, projectTimelineDuration))
+        : Math.max(0, next);
+    }
+
+    function syncTimelineAudioToGlobalTime(globalTime, { force = false } = {}) {
+      if (!isMulticam || !timelineAudioSource || !timelineAudio.src) return;
+      const targetTime = clampMediaTime(globalTime, timelineAudio.duration);
+      const drift = Math.abs((timelineAudio.currentTime || 0) - targetTime);
+      if (force || drift > 0.25) {
+        isSyncingTimelineAudio = true;
+        timelineAudio.currentTime = targetTime;
+        isSyncingTimelineAudio = false;
+      }
+      timelineAudio.playbackRate = player.playbackRate || 1;
+    }
+
+    function playTimelineAudio() {
+      if (!isMulticam || !timelineAudioSource) return;
+      syncTimelineAudioToGlobalTime(playbackGlobalTime, { force: true });
+      timelineAudio.play().catch(err => {
+        const reason = err?.name || err?.message || '';
+        setSaveStatus(reason ? ('总混音待播放 ' + reason) : '总混音待播放', 'dirty');
+      });
+    }
+
+    function pauseTimelineAudio() {
+      if (!isMulticam) return;
+      timelineAudio.pause();
+    }
+
     function getGlobalTime() {
-      return (player.currentTime || 0) + (isMulticam ? getActiveOffset() : 0);
+      updateGlobalTimeFromPreview();
+      if (isMulticam) return playbackGlobalTime || 0;
+      return player.currentTime || 0;
+    }
+
+    function syncPreviewToGlobalTime(globalTime, { force = false } = {}) {
+      if (!isMulticam) return;
+      const clip = findPreviewClipByGlobalTime(activeCameraId, globalTime);
+      const source = clip ? getSourceById(clip.sourceId) : getActiveSource();
+      if (!source || source.kind !== 'video' || !source.reviewPath) return;
+      const localTime = clip
+        ? Number(clip.localStart || 0) + (Number(globalTime || 0) - Number(clip.globalStart || 0))
+        : globalTimeToSourceLocalTime(source.id, globalTime);
+      const mediaTime = sourceLocalToMediaTime(source.id, localTime);
+      const nextClipId = clip?.id || '';
+      const srcChanged = player.getAttribute('src') !== source.reviewPath;
+      if (srcChanged) {
+        const wasPlaying = !player.paused;
+        currentPreviewClipId = nextClipId;
+        player.setAttribute('src', source.reviewPath);
+        player.load();
+        player.addEventListener('loadedmetadata', () => {
+          isSyncingPreview = true;
+          player.currentTime = clampMediaTime(mediaTime, player.duration);
+          isSyncingPreview = false;
+          if (wasPlaying) player.play().catch(() => {});
+          renderMulticamPanel();
+        }, { once: true });
+        return;
+      }
+      const boundedMediaTime = clampMediaTime(mediaTime, player.duration);
+      const drift = Math.abs((player.currentTime || 0) - boundedMediaTime);
+      if (force || currentPreviewClipId !== nextClipId || drift > 0.35) {
+        currentPreviewClipId = nextClipId;
+        if (player.duration) {
+          isSyncingPreview = true;
+          player.currentTime = boundedMediaTime;
+          isSyncingPreview = false;
+        }
+      }
     }
 
     function setGlobalTime(time) {
       const globalTime = Math.max(0, Number(time) || 0);
-      const localTime = isMulticam ? Math.max(0, globalTime - getActiveOffset()) : globalTime;
+      playbackGlobalTime = projectTimelineDuration
+        ? Math.min(globalTime, projectTimelineDuration)
+        : globalTime;
+      lastGlobalClockMs = performance.now();
+      if (isMulticam) {
+        syncPreviewToGlobalTime(playbackGlobalTime, { force: true });
+        syncTimelineAudioToGlobalTime(playbackGlobalTime, { force: true });
+        return;
+      }
+      const source = getActiveSource();
+      const localTime = source ? Math.max(0, globalTimeToSourceLocalTime(source.id, globalTime)) : globalTime;
       if (player.duration) {
         player.currentTime = Math.min(localTime, Math.max(0, player.duration - 0.05));
       } else {
@@ -1510,18 +1738,8 @@ const html = `<!DOCTYPE html>
       const source = getSourceById(sourceId) || getActiveSource();
       if (!source || source.kind !== 'video' || !source.reviewPath) return;
       const globalTime = keepGlobalTime ? getGlobalTime() : Number(pendingRestoreTime || 0);
-      const wasPlaying = !player.paused;
       activeCameraId = source.id;
-      if (player.getAttribute('src') !== source.reviewPath) {
-        player.setAttribute('src', source.reviewPath);
-        player.load();
-        player.addEventListener('loadedmetadata', () => {
-          setGlobalTime(globalTime);
-          if (wasPlaying) player.play().catch(() => {});
-        }, { once: true });
-      } else if (keepGlobalTime) {
-        setGlobalTime(globalTime);
-      }
+      if (keepGlobalTime) setGlobalTime(globalTime);
       if (persist) scheduleProjectSave();
     }
 
@@ -1547,6 +1765,18 @@ const html = `<!DOCTYPE html>
       if (!isMulticam || !multicamPanel) return;
       multicamPanel.innerHTML = '';
       const videoSources = multicamSources.filter(source => source.kind === 'video' && source.reviewPath);
+      const previewLanes = Array.from(new Set(
+        timelineClips
+          .filter(clip => {
+            const source = getSourceById(clip.sourceId);
+            return source?.kind === 'video' && source.reviewPath && Number.isFinite(Number(clip.lane));
+          })
+          .map(clip => Number(clip.lane))
+      )).sort((a, b) => a - b);
+      const cameraNameForLane = lane => {
+        const index = Math.max(0, previewLanes.indexOf(Number(lane)));
+        return \`机位 \${String.fromCharCode(65 + index)}\`;
+      };
       const syncLabels = {
         xml: 'XML 对轨',
         timecode: 'Timecode',
@@ -1559,17 +1789,24 @@ const html = `<!DOCTYPE html>
       const cameraField = document.createElement('div');
       cameraField.className = 'multicam-field';
       const cameraLabel = document.createElement('label');
-      cameraLabel.textContent = '当前预览';
+      cameraLabel.textContent = '预览机位';
       const cameraSelect = document.createElement('select');
-      videoSources.forEach(source => {
+      previewLanes.forEach(lane => {
         const option = document.createElement('option');
-        option.value = source.id;
-        option.textContent = source.name || source.id;
+        option.value = String(lane);
+        const currentClip = findPreviewClipByGlobalTime(activeCameraId, getGlobalTime());
+        const sampleClip = timelineClips.find(clip => Number(clip.lane || 0) === Number(lane) && getSourceById(clip.sourceId)?.kind === 'video');
+        const source = getSourceById((currentClip && Number(currentClip.lane || 0) === Number(lane) ? currentClip : sampleClip)?.sourceId);
+        option.textContent = source?.name ? \`\${cameraNameForLane(lane)} · \${source.name}\` : cameraNameForLane(lane);
         cameraSelect.appendChild(option);
       });
-      cameraSelect.value = activeCameraId;
+      cameraSelect.value = String(activePreviewLane);
       cameraSelect.onchange = event => {
-        setActiveCamera(event.target.value);
+        activePreviewLane = Number(event.target.value);
+        const clip = findPreviewClipByGlobalTime(activeCameraId, getGlobalTime());
+        if (clip) activeCameraId = clip.sourceId;
+        setGlobalTime(getGlobalTime());
+        scheduleProjectSave();
         event.target.blur();
       };
       cameraField.appendChild(cameraLabel);
@@ -1636,6 +1873,7 @@ const html = `<!DOCTYPE html>
         sourceOffsets,
         speakerNames,
         activeCameraId,
+        activePreviewLane,
         paragraphOrder
       });
     }
@@ -1660,6 +1898,7 @@ const html = `<!DOCTYPE html>
         sourceOffsets,
         speakerNames,
         activeCameraId,
+        activePreviewLane,
         paragraphOrder,
         paragraphs: getParagraphPayload(),
         wordCount: words.length
@@ -1709,6 +1948,11 @@ const html = `<!DOCTYPE html>
 
     function pauseBgm() {
       bgmPlayer.pause();
+    }
+
+    function pausePreviewAudio() {
+      pauseTimelineAudio();
+      pauseBgm();
     }
 
     function setSelectedBgm(fileName, { persist = true } = {}) {
@@ -1804,6 +2048,7 @@ const html = `<!DOCTYPE html>
             sourceOffsets = { ...baseSourceOffsets, ...(data.state.sourceOffsets || {}) };
             speakerNames = { ...speakerNames, ...(data.state.speakerNames || {}) };
             activeCameraId = data.state.activeCameraId || activeCameraId;
+            if (Number.isFinite(Number(data.state.activePreviewLane))) activePreviewLane = Number(data.state.activePreviewLane);
             setActiveCamera(activeCameraId, { persist: false, keepGlobalTime: false });
             renderMulticamPanel();
           }
@@ -2122,6 +2367,7 @@ const html = `<!DOCTYPE html>
         sourceOffsets: { ...sourceOffsets },
         speakerNames: { ...speakerNames },
         activeCameraId,
+        activePreviewLane,
         paragraphOrder: paragraphOrder.slice()
       };
     }
@@ -2180,6 +2426,7 @@ const html = `<!DOCTYPE html>
         sourceOffsets = { ...baseSourceOffsets, ...(state?.sourceOffsets || {}) };
         speakerNames = { ...speakerNames, ...(state?.speakerNames || {}) };
         activeCameraId = state?.activeCameraId || activeCameraId;
+        if (Number.isFinite(Number(state?.activePreviewLane))) activePreviewLane = Number(state.activePreviewLane);
         setActiveCamera(activeCameraId, { persist: false });
         renderMulticamPanel();
       }
@@ -3083,6 +3330,19 @@ const html = `<!DOCTYPE html>
       hideSelectionMenu();
     }
 
+    function locateSelectionStart() {
+      if (!activeSelectionIndices.length) return;
+      const timed = activeSelectionIndices
+        .map(i => ({ index: i, word: words[i] }))
+        .filter(item => item.word && Number.isFinite(Number(item.word.start)))
+        .sort((a, b) => Number(a.word.start) - Number(b.word.start));
+      if (!timed.length) return;
+      const targetIndex = timed[0].index;
+      setGlobalTime(words[targetIndex].start);
+      scrollToIndex(targetIndex);
+      hideSelectionMenu();
+    }
+
     async function addTermsToDictionary(text) {
       const res = await fetch('/api/dictionary', {
         method: 'POST',
@@ -3210,23 +3470,41 @@ const html = `<!DOCTYPE html>
     const gainNode = audioCtx.createGain();
     source.connect(gainNode);
     gainNode.connect(audioCtx.destination);
-    player.addEventListener('play', () => {
+    const timelineAudioNode = isMulticam && timelineAudioSource ? audioCtx.createMediaElementSource(timelineAudio) : null;
+    const timelineGainNode = audioCtx.createGain();
+    if (timelineAudioNode) {
+      timelineAudioNode.connect(timelineGainNode);
+      timelineGainNode.connect(audioCtx.destination);
+    }
+    const getActivePreviewGainNode = () => (isMulticam && timelineAudioNode ? timelineGainNode : gainNode);
+    resumePreviewAudioFromGesture = () => {
       if (audioCtx.state === 'suspended') audioCtx.resume();
+      playTimelineAudio();
       safePlayBgm();
+    };
+    player.addEventListener('play', () => {
+      lastGlobalClockMs = performance.now();
+      if (isMulticam) syncPreviewToGlobalTime(playbackGlobalTime, { force: true });
+      resumePreviewAudioFromGesture();
     });
     player.addEventListener('pause', () => {
-      pauseBgm();
+      pausePreviewAudio();
       scheduleProjectSave();
     });
-    player.addEventListener('ended', pauseBgm);
+    player.addEventListener('ended', pausePreviewAudio);
     player.addEventListener('loadedmetadata', () => {
       if (pendingRestoreTime != null) {
         setGlobalTime(pendingRestoreTime);
         pendingRestoreTime = null;
+      } else if (isMulticam) {
+        syncPreviewToGlobalTime(playbackGlobalTime, { force: true });
       }
       updateStats();
     });
     player.addEventListener('ratechange', () => scheduleProjectSave());
+    player.addEventListener('ratechange', () => {
+      timelineAudio.playbackRate = player.playbackRate || 1;
+    });
 
     // 预计算跳过区间（selected 变化时重建）
     let skipIntervals = [];
@@ -3253,6 +3531,19 @@ const html = `<!DOCTYPE html>
     let skipLock = false;
     function tick() {
       requestAnimationFrame(tick);
+      const now = performance.now();
+      if (isMulticam) {
+        if (!player.paused) {
+          updateGlobalTimeFromPreview();
+          syncTimelineAudioToGlobalTime(playbackGlobalTime);
+          if (projectTimelineDuration && playbackGlobalTime >= projectTimelineDuration) {
+            playbackGlobalTime = projectTimelineDuration;
+            player.pause();
+          }
+          syncPreviewToGlobalTime(playbackGlobalTime);
+        }
+        lastGlobalClockMs = now;
+      }
       const t = getGlobalTime();
 
       if (!player.paused) {
@@ -3260,7 +3551,7 @@ const html = `<!DOCTYPE html>
           if (t >= iv.start && t < iv.end) {
             if (!skipLock) {
               skipLock = true;
-              gainNode.gain.setValueAtTime(0, audioCtx.currentTime);
+              getActivePreviewGainNode().gain.setValueAtTime(0, audioCtx.currentTime);
               setGlobalTime(iv.end);
             }
             return;
@@ -3268,11 +3559,11 @@ const html = `<!DOCTYPE html>
         }
         if (skipLock) {
           skipLock = false;
-          gainNode.gain.setValueAtTime(1, audioCtx.currentTime);
+          getActivePreviewGainNode().gain.setValueAtTime(1, audioCtx.currentTime);
         }
       }
 
-      timeDisplay.textContent = \`\${formatTime(t)} / \${formatTime(player.duration || 0)}\`;
+      timeDisplay.textContent = \`\${formatTime(t)} / \${formatTime(projectTimelineDuration || player.duration || 0)}\`;
       bottomCurrent.textContent = formatDurationCompact(t);
 
       // 高亮当前词（用二分查找提速）
@@ -3297,6 +3588,10 @@ const html = `<!DOCTYPE html>
         currentIndex = curr;
         updateActiveSubtitleRow(t);
         lastHighlight = curr;
+      } else if (curr >= 0 && !document.querySelector(\`[data-index="\${curr}"].is-current\`)) {
+        document.querySelectorAll(\`[data-index="\${curr}"]\`).forEach(el => {
+          el.classList.add('is-current');
+        });
       }
     }
     requestAnimationFrame(tick);
@@ -3776,7 +4071,11 @@ const html = `<!DOCTYPE html>
       redoSelection
     });
 
-    document.getElementById('playBtn').addEventListener('click', togglePlay);
+    const playButton = document.getElementById('playBtn');
+    playButton.addEventListener('pointerdown', () => {
+      if (player.paused) resumePreviewAudioFromGesture();
+    });
+    playButton.addEventListener('click', togglePlay);
     document.getElementById('speed').addEventListener('change', event => {
       setPlaybackRate(event.target.value);
       event.target.blur();
@@ -3792,6 +4091,7 @@ const html = `<!DOCTYPE html>
     document.getElementById('redoBtn').addEventListener('click', redoSelection);
     splitModeBtn.addEventListener('click', toggleCutMode);
     document.getElementById('selectionToggleBtn').addEventListener('click', toggleSelectionMenuDelete);
+    document.getElementById('selectionLocateBtn').addEventListener('click', locateSelectionStart);
     document.getElementById('selectionCopyBtn').addEventListener('click', copySelectionText);
     document.getElementById('selectionEditBtn').addEventListener('click', editSelectionText);
     paperTitle.addEventListener('dblclick', startProjectTitleEdit);

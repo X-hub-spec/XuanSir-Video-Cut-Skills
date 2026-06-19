@@ -116,11 +116,21 @@ function normalizeParagraphPayload(value) {
   return value
     .map((paragraph, index) => ({
       id: String(paragraph.id || `paragraph_${index + 1}`),
-      start: Number(paragraph.start),
-      end: Number(paragraph.end),
+      start: Math.max(0, Number(paragraph.start)),
+      end: Math.max(0, Number(paragraph.end)),
       startIndex: Number.isInteger(Number(paragraph.startIndex)) ? Number(paragraph.startIndex) : null,
     }))
     .filter(paragraph => Number.isFinite(paragraph.start) && Number.isFinite(paragraph.end) && paragraph.end > paragraph.start);
+}
+
+function normalizeTimeSegments(value) {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map(segment => ({
+      start: Math.max(0, Number(segment.start)),
+      end: Math.max(0, Number(segment.end)),
+    }))
+    .filter(segment => Number.isFinite(segment.start) && Number.isFinite(segment.end) && segment.end > segment.start);
 }
 
 function saveProjectState(state) {
@@ -145,10 +155,11 @@ function saveProjectState(state) {
     sourceOffsets: normalizeNumberMap(state.sourceOffsets || {}),
     speakerNames: normalizeStringMap(state.speakerNames || {}),
     activeCameraId: typeof state.activeCameraId === 'string' ? state.activeCameraId : '',
+    activePreviewLane: Number.isFinite(Number(state.activePreviewLane)) ? Number(state.activePreviewLane) : null,
     paragraphOrder: Array.isArray(state.paragraphOrder) ? state.paragraphOrder.map(String) : [],
     paragraphs: normalizeParagraphPayload(state.paragraphs || []),
     wordCount: Number.isFinite(Number(state.wordCount)) ? Number(state.wordCount) : null,
-    deleteSegments: Array.isArray(state.deleteSegments) ? state.deleteSegments : [],
+    deleteSegments: normalizeTimeSegments(state.deleteSegments || []),
     savedAt: new Date().toISOString(),
   };
   const tmpFile = `${PROJECT_STATE_FILE}.tmp`;
@@ -274,7 +285,7 @@ const server = http.createServer((req, res) => {
     readRequestBody(req, body => {
       try {
         const payload = JSON.parse(body || '{}');
-        const deleteList = Array.isArray(payload) ? payload : payload.segments;
+        const deleteList = normalizeTimeSegments(Array.isArray(payload) ? payload : payload.segments);
         const subtitles = Array.isArray(payload.subtitles) ? payload.subtitles : [];
         const orderedTimelineRanges = Array.isArray(payload.orderedTimelineRanges) ? payload.orderedTimelineRanges : null;
         if (!Array.isArray(deleteList)) {
@@ -286,6 +297,12 @@ const server = http.createServer((req, res) => {
 
         fs.writeFileSync('delete_segments.json', JSON.stringify(deleteList, null, 2));
         console.log(`📝 保存 ${deleteList.length} 个删除片段`);
+        saveProjectState({
+          ...payload,
+          selectedIndices: payload.selectedIndices || [],
+          deleteSegments: deleteList,
+          paragraphs: payload.paragraphs || [],
+        });
 
         const outputDir = payload.chooseDirectory ? chooseOutputDirectory() : process.cwd();
         const baseName = findAvailableExportBaseName(outputDir, payload.projectTitle);
@@ -346,7 +363,7 @@ const server = http.createServer((req, res) => {
     req.on('end', () => {
       try {
         const payload = JSON.parse(body);
-        const deleteList = Array.isArray(payload) ? payload : payload.segments;
+        const deleteList = normalizeTimeSegments(Array.isArray(payload) ? payload : payload.segments);
         const orderedTimelineRanges = Array.isArray(payload.orderedTimelineRanges) ? payload.orderedTimelineRanges : null;
         if (!Array.isArray(deleteList)) {
           throw new Error('删除列表格式错误');
@@ -909,6 +926,7 @@ function getSourceMediaInfo(source) {
   }
   return {
     input,
+    assetStart: Number.isFinite(Number(source.assetStart)) ? Number(source.assetStart) : 0,
     duration: Number.isFinite(Number(source.duration)) ? Number(source.duration) : Number(media.duration || 0),
     width: Number(source.width || media.width || 1920),
     height: Number(source.height || media.height || 1080),
@@ -916,6 +934,82 @@ function getSourceMediaInfo(source) {
     audioChannels: Number(source.audioChannels || media.audioChannels || 2),
     audioSampleRate: String(source.audioSampleRate || media.audioSampleRate || '48000'),
   };
+}
+
+function buildMulticamResourceLines(sourceEntries, primaryMedia, fallbackDuration = 0) {
+  const resourceLines = [
+    `    <format id="r1" name="FFVideoFormat${primaryMedia.height}p" frameDuration="${primaryMedia.frameDuration}" width="${primaryMedia.width}" height="${primaryMedia.height}"/>`
+  ];
+  sourceEntries.forEach(entry => {
+    const source = entry.source;
+    const media = entry.media;
+    const srcUrl = pathToFileURL(path.resolve(media.input)).href;
+    const hasVideo = source.kind === 'video' ? '1' : '0';
+    const formatAttr = source.kind === 'video' ? ' format="r1"' : '';
+    const assetStart = Number.isFinite(Number(media.assetStart)) ? Number(media.assetStart) : 0;
+    resourceLines.push(
+      `    <asset id="${entry.assetId}" name="${escapeXml(source.name || path.basename(media.input))}" start="${secondsToFcpxmlTime(assetStart)}" duration="${secondsToFcpxmlTime(media.duration || fallbackDuration)}" hasVideo="${hasVideo}" hasAudio="1" audioSources="1" audioChannels="${media.audioChannels}" audioRate="${media.audioSampleRate}"${formatAttr} src="${escapeXml(srcUrl)}"/>`
+    );
+  });
+  return resourceLines;
+}
+
+function exportTimelineClipsFinalCutXML(project, payload, output, context) {
+  const { sourceEntries, primaryMedia, keepSegments, timelineDuration, projectName } = context;
+  const entryBySourceId = new Map(sourceEntries.map(entry => [entry.source.id, entry]));
+  const resourceLines = buildMulticamResourceLines(sourceEntries, primaryMedia, getMulticamDuration(project));
+  const spineLines = [];
+  let timelineOffset = 0;
+
+  keepSegments.forEach((seg, segmentIndex) => {
+    const segmentDuration = seg.end - seg.start;
+    (project.timelineClips || [])
+      .filter(clip => clip && clip.enabled !== false)
+      .sort((a, b) => Number(a.globalStart || 0) - Number(b.globalStart || 0) || Number(a.lane || 0) - Number(b.lane || 0))
+      .forEach(clip => {
+        const entry = entryBySourceId.get(clip.sourceId);
+        if (!entry) return;
+        const clipStart = Number(clip.globalStart || 0);
+        const clipEnd = clipStart + Number(clip.duration || 0);
+        const overlapStart = Math.max(seg.start, clipStart);
+        const overlapEnd = Math.min(seg.end, clipEnd);
+        if (overlapEnd <= overlapStart) return;
+        const offset = timelineOffset + (overlapStart - seg.start);
+        const localStart = Number(clip.localStart || 0) + (overlapStart - clipStart);
+        const duration = overlapEnd - overlapStart;
+        const laneNumber = Number(clip.lane || 0);
+        const lane = laneNumber === 0 ? '' : ` lane="${laneNumber}"`;
+        const role = clip.role ? ` role="${escapeXml(clip.role)}"` : '';
+        const label = `${String(segmentIndex + 1).padStart(3, '0')} ${clip.name || entry.source.name || entry.source.id}`;
+        spineLines.push(`            <asset-clip name="${escapeXml(label)}" ref="${entry.assetId}" offset="${secondsToFcpxmlTime(offset)}" start="${secondsToFcpxmlTime(localStart)}" duration="${secondsToFcpxmlTime(duration)}"${lane}${role}/>`);
+      });
+    timelineOffset += segmentDuration;
+  });
+
+  const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE fcpxml>
+<fcpxml version="1.10">
+  <resources>
+${resourceLines.join('\n')}
+  </resources>
+  <library>
+    <event name="videocut-multicam">
+      <project name="${escapeXml(projectName)}">
+        <sequence format="r1" duration="${secondsToFcpxmlTime(timelineDuration)}" tcStart="0s" tcFormat="NDF" audioLayout="stereo" audioRate="${primaryMedia.audioSampleRate}">
+          <spine>
+${spineLines.join('\n')}
+          </spine>
+        </sequence>
+      </project>
+    </event>
+  </library>
+</fcpxml>
+`;
+
+  fs.writeFileSync(output, xml);
+  console.log(`✅ 多机位 Final Cut XML: ${output}`);
+  console.log(`🎞️ 时间线轨道片段: ${spineLines.length}, 时间线时长: ${timelineDuration.toFixed(2)}s`);
+  return { keepSegments, timelineDuration, originalDuration: getMulticamDuration(project), xml };
 }
 
 function exportMulticamFinalCutXML(project, payload, output) {
@@ -944,19 +1038,17 @@ function exportMulticamFinalCutXML(project, payload, output) {
   const timelineDuration = keepSegments.reduce((sum, seg) => sum + (seg.end - seg.start), 0);
   const projectName = path.basename(output, path.extname(output));
 
-  const resourceLines = [
-    `    <format id="r1" name="FFVideoFormat${primaryMedia.height}p" frameDuration="${primaryMedia.frameDuration}" width="${primaryMedia.width}" height="${primaryMedia.height}"/>`
-  ];
-  sourceEntries.forEach(entry => {
-    const source = entry.source;
-    const media = entry.media;
-    const srcUrl = pathToFileURL(path.resolve(media.input)).href;
-    const hasVideo = source.kind === 'video' ? '1' : '0';
-    const formatAttr = source.kind === 'video' ? ' format="r1"' : '';
-    resourceLines.push(
-      `    <asset id="${entry.assetId}" name="${escapeXml(source.name || path.basename(media.input))}" start="0s" duration="${secondsToFcpxmlTime(media.duration || getMulticamDuration(project))}" hasVideo="${hasVideo}" hasAudio="1" audioSources="1" audioChannels="${media.audioChannels}" audioRate="${media.audioSampleRate}"${formatAttr} src="${escapeXml(srcUrl)}"/>`
-    );
-  });
+  if (Array.isArray(project.timelineClips) && project.timelineClips.length) {
+    return exportTimelineClipsFinalCutXML(project, payload, output, {
+      sourceEntries,
+      primaryMedia,
+      keepSegments,
+      timelineDuration,
+      projectName,
+    });
+  }
+
+  const resourceLines = buildMulticamResourceLines(sourceEntries, primaryMedia, getMulticamDuration(project));
 
   let timelineOffset = 0;
   const spineLines = [];
